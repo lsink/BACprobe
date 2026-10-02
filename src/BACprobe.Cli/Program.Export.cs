@@ -1,22 +1,77 @@
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Export;
+using BACprobe.Core.Jobs;
 
 namespace BACprobe.Cli;
 
 internal static partial class Program
 {
+    private sealed record Collected(List<ExportDevice> Devices, List<string> Failed);
+
     private static async Task<int> ExportAsync(Dictionary<string, string?> opts)
     {
-        var all = opts.ContainsKey("all");
-        if (all == opts.ContainsKey("device"))
-            throw new ArgumentException("Choose what to export: --device <instance> for one device, or --all for every device that answers.");
+        var fromJob = opts.TryGetValue("job", out var jobPath) && jobPath is not null;
+        if (!fromJob && opts.ContainsKey("all") == opts.ContainsKey("device"))
+            throw new ArgumentException("Choose what to export: --device <instance> for one device, --all for every device that answers, " +
+                                        "or --job <file> to export from a saved job without touching the network.");
 
         var (format, path) = ResolveOutput(opts);
         if (File.Exists(path) && !opts.ContainsKey("force"))
             return Fail($"{path} already exists.\n  Next step: pick another name with --out, or add --force to overwrite it.");
 
+        Collected collected;
+        string project = opts.TryGetValue("project", out var p) && p is not null ? p : "BACprobe export";
+        if (fromJob)
+        {
+            var job = LoadJob(jobPath!);
+            if (opts.TryGetValue("project", out _) is false && job.Info.Name.Length > 0) project = job.Info.Name;
+            var wanted = opts.TryGetValue("device", out var dev) && int.TryParse(dev, out var inst) ? (uint?)inst : null;
+            var devices = job.Devices.Where(d => wanted is null || d.Instance == wanted).ToList();
+            if (devices.Count == 0)
+                return Fail(wanted is null ? "That job has no devices." : $"Device {wanted} is not in that job.\n  Next step: run 'bacprobe job show {jobPath}' to see what it holds.");
+            var unread = devices.Where(d => !d.PointsRead).Select(d => $"device {d.Instance} ({d.Name}): points were not read when the job was saved").ToList();
+            collected = new Collected([.. devices.Where(d => d.PointsRead).Select(d => d.ToExportDevice())], unread);
+            if (collected.Devices.Count == 0)
+                return Fail("None of those devices have saved points.\n  Next step: save the job again with 'bacprobe job save --all'.");
+        }
+        else
+        {
+            var (result, error) = await CollectFromNetworkAsync(opts);
+            if (result is null) return Fail(error!);
+            collected = result;
+        }
+
+        try
+        {
+            PointExporter.Write(path, format, collected.Devices, project);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Fail($"Could not write {path}: {ex.Message}\n" +
+                        "  Likely cause: the file is open in Excel, or the folder is read-only.\n" +
+                        "  Next step:    close the file or choose another place with --out.");
+        }
+
+        var points = collected.Devices.Sum(c => c.Points.Count());
+        Console.WriteLine($"Exported {points} point(s) from {collected.Devices.Count} device(s) to {Path.GetFullPath(path)} ({format}).");
+        if (collected.Failed.Count > 0)
+        {
+            Console.WriteLine($"NOT included ({collected.Failed.Count}):");
+            foreach (var f in collected.Failed) Console.WriteLine("  " + f);
+            return 4;
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Connect, find the device(s) named by --device or --all, and read every point list.
+    /// Returns the readable devices plus a note for each that failed.
+    /// </summary>
+    private static async Task<(Collected?, string?)> CollectFromNetworkAsync(Dictionary<string, string?> opts)
+    {
+        var all = opts.ContainsKey("all");
         var (svc, error) = await OpenSessionAsync(opts);
-        if (svc is null) return Fail(error!);
+        if (svc is null) return (null, error);
         using var _ = svc;
 
         List<DiscoveredDevice> devices;
@@ -26,9 +81,9 @@ internal static partial class Program
             Console.WriteLine($"Sending Who-Is, listening {wait}s...");
             devices = [.. await svc.WhoIsAsync(-1, -1, TimeSpan.FromSeconds(wait))];
             if (devices.Count == 0)
-                return Fail("No devices answered, so there is nothing to export.\n" +
-                            "  Likely cause: wrong adapter/subnet, a firewall blocking UDP 47808, or devices on another subnet (try --bbmd).\n" +
-                            "  Next step:    run 'bacprobe discover' to check what is reachable.");
+                return (null, "No devices answered, so there is nothing to read.\n" +
+                              "  Likely cause: wrong adapter/subnet, a firewall blocking UDP 47808, or devices on another subnet (try --bbmd).\n" +
+                              "  Next step:    run 'bacprobe discover' to check what is reachable.");
             Console.WriteLine($"{devices.Count} device(s) found; reading names...");
             await svc.EnrichAsync(devices);
         }
@@ -39,9 +94,9 @@ internal static partial class Program
             var found = await svc.WhoIsAsync(instance, instance, TimeSpan.FromSeconds(IntOpt(opts, "wait", 3)));
             var device = found.FirstOrDefault(d => d.InstanceId == instance);
             if (device is null)
-                return Fail($"Device {instance} did not answer Who-Is.\n" +
-                            "  Likely cause: wrong instance number, wrong adapter/subnet, or the device is behind a router/BBMD.\n" +
-                            "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
+                return (null, $"Device {instance} did not answer Who-Is.\n" +
+                              "  Likely cause: wrong instance number, wrong adapter/subnet, or the device is behind a router/BBMD.\n" +
+                              "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
             await svc.EnrichAsync([device]);
             devices = [device];
         }
@@ -62,30 +117,16 @@ internal static partial class Program
         }
         Console.WriteLine();
 
-        if (collected.Count == 0)
-            return Fail("Could not read any device, so nothing was exported.\n  " + string.Join("\n  ", failed) +
-                        "\n  Next step: check the connection and run the command again.");
+        return collected.Count == 0
+            ? (null, "Could not read any device, so nothing was done.\n  " + string.Join("\n  ", failed) +
+                     "\n  Next step: check the connection and run the command again.")
+            : (new Collected(collected, failed), null);
+    }
 
-        try
-        {
-            PointExporter.Write(path, format, collected, opts.TryGetValue("project", out var p) && p is not null ? p : "BACprobe export");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return Fail($"Could not write {path}: {ex.Message}\n" +
-                        "  Likely cause: the file is open in Excel, or the folder is read-only.\n" +
-                        "  Next step:    close the file or choose another place with --out.");
-        }
-
-        var points = collected.Sum(c => c.Points.Count());
-        Console.WriteLine($"Exported {points} point(s) from {collected.Count} device(s) to {Path.GetFullPath(path)} ({format}).");
-        if (failed.Count > 0)
-        {
-            Console.WriteLine($"NOT included ({failed.Count}):");
-            foreach (var f in failed) Console.WriteLine("  " + f);
-            return 4;
-        }
-        return 0;
+    private static JobSnapshot LoadJob(string path)
+    {
+        try { return JobFile.Load(path); }
+        catch (JobFileException ex) { throw new ArgumentException(ex.Message, ex); }
     }
 
     private static (ExportFormat, string) ResolveOutput(Dictionary<string, string?> opts)

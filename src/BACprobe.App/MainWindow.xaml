@@ -19,7 +19,20 @@
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
-    <TextBlock Grid.Row="0" Text="1. Choose your network adapter" FontSize="16" FontWeight="SemiBold" />
+    <DockPanel Grid.Row="0">
+      <WrapPanel DockPanel.Dock="Right" VerticalAlignment="Center">
+        <TextBlock Text="Job:" VerticalAlignment="Center" />
+        <TextBox Text="{Binding JobName, UpdateSourceTrigger=PropertyChanged}" Width="150" Margin="6,0,0,0"
+                 ToolTip="A name for this site visit, e.g. City Hall. Saved in the job file and used as the EDE project name." />
+        <TextBox Text="{Binding JobNotes, UpdateSourceTrigger=PropertyChanged}" Width="200" Margin="6,0,0,0"
+                 ToolTip="Notes for yourself, e.g. which panel or floor. Saved in the job file." />
+        <Button Content="Save job..." Padding="12,4" Margin="8,0,0,0" Command="{Binding SaveJobCommand}"
+                ToolTip="Save the devices, points and write history to a .bacprobe file you can reopen later, even with no network." />
+        <Button Content="Open job..." Padding="12,4" Margin="6,0,0,0" Command="{Binding OpenJobCommand}"
+                ToolTip="Open a saved .bacprobe file and browse it offline." />
+      </WrapPanel>
+      <TextBlock Text="1. Choose your network adapter" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+    </DockPanel>
     <DockPanel Grid.Row="1" Margin="0,8,0,12">
       <Button DockPanel.Dock="Right" Content="Re-check" Margin="8,0,0,0" Padding="12,4"
               Command="{Binding RunPreflightCommand}" />
@@ -83,6 +96,18 @@
                 ToolTip="Read every device found and save one combined point list." />
       </WrapPanel>
       <TextBlock DockPanel.Dock="Top" Text="{Binding BbmdStatus}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
+      <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="8,6" BorderBrush="DarkOrange" BorderThickness="1" CornerRadius="4">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding OfflineBanner}" Value="">
+                <Setter Property="Visibility" Value="Collapsed" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <TextBlock Text="{Binding OfflineBanner}" TextWrapping="Wrap" />
+      </Border>
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="2*" MinHeight="80" />

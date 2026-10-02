@@ -30,6 +30,29 @@ public partial class MainWindow : Window
                 var format = dialog.FilterIndex switch { 1 => ExportFormat.Xlsx, 3 => ExportFormat.Ede, _ => ExportFormat.Csv };
                 return (dialog.FileName, format);
             };
+            vm.PickJobSavePath = suggested =>
+            {
+                var dialog = new SaveFileDialog
+                {
+                    Title = "Save job",
+                    FileName = suggested,
+                    Filter = "BACprobe job (*.bacprobe)|*.bacprobe",
+                    DefaultExt = ".bacprobe",
+                    AddExtension = true,
+                    OverwritePrompt = true,
+                };
+                return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+            };
+            vm.PickJobOpenPath = () =>
+            {
+                var dialog = new OpenFileDialog
+                {
+                    Title = "Open job",
+                    Filter = "BACprobe job (*.bacprobe)|*.bacprobe|All files (*.*)|*.*",
+                    CheckFileExists = true,
+                };
+                return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+            };
             vm.AskYesNoCancel = (title, text) =>
                 MessageBox.Show(this, text, title, MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
         }

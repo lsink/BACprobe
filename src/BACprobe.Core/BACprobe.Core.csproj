@@ -7,5 +7,6 @@
   <ItemGroup>
     <PackageReference Include="BACnet" />
     <PackageReference Include="ClosedXML" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 </Project>

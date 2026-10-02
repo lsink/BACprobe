@@ -17,6 +17,8 @@ internal static partial class Program
           bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
+          bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
+          bacprobe job show  <site.bacprobe> [--device <n>] [--log]
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
           bacprobe release   --device <instance> --object <type:n> [--priority 8] [--yes]
@@ -32,6 +34,9 @@ internal static partial class Program
                    release gives it back. Every write is logged to %LOCALAPPDATA%BACprobewrite-log.txt.
         --bbmd     Register as a foreign device with a BBMD so Who-Is reaches other subnets (objects/read/write accept it too).
                    --ttl is how long the BBMD keeps you (default 300 s); BACprobe renews automatically.
+        job        Keep a site visit in one file. 'job save' reads the devices and points and stores them (plus any
+                   --name/--notes); 'job show <file> [--device n] [--log]' browses it offline; 'export --job <file>'
+                   exports from it. Saved values are a snapshot, not live. Existing files need --force.
         simulate   Run fake BACnet devices on this PC (Ctrl+C to stop) so you can test without hardware.
                    --devices n (default 2), --first instance (default 1001),
                    --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
@@ -58,6 +63,7 @@ internal static partial class Program
                 "objects" => await ObjectsAsync(opts),
                 "read" => await ReadAsync(opts),
                 "export" => await ExportAsync(opts),
+                "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),
                 "release" => await ReleaseAsync(opts),
                 _ => Fail($"Unknown command '{args[0]}'.\n\n{Usage}"),
@@ -232,9 +238,14 @@ internal static partial class Program
     private static Dictionary<string, string?> ParseOptions(string[] args)
     {
         var opts = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var positional = 0;
         for (var i = 0; i < args.Length; i++)
         {
-            if (!args[i].StartsWith("--", StringComparison.Ordinal)) continue;
+            if (!args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                opts[$"_{positional++}"] = args[i]; // bare words, e.g. the sub-command and file in 'job show site.bacprobe'
+                continue;
+            }
             var key = args[i][2..];
             opts[key] = i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal) ? args[++i] : null;
         }

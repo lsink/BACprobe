@@ -4,6 +4,7 @@ using BACprobe.Core.Bbmd;
 using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Export;
+using BACprobe.Core.Jobs;
 using BACprobe.Core.Networking;
 using BACprobe.Core.Writing;
 using System.IO.BACnet;
@@ -66,11 +67,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly OverrideTracker _overrides = new();
     private DeviceWriter? _writer;
 
+    // Point lists read this session (or loaded from a job), by device instance: what Save job stores and what offline browsing shows.
+    private readonly Dictionary<uint, ExportDevice> _pointCache = [];
+    private DateTimeOffset _jobCreated = DateTimeOffset.Now;
+    private List<WriteLogEntry> _persistedLog = [];
+    private int _sessionLogSaved;
+
     /// <summary>Set by the window: shows a yes/no box, returns true for yes.</summary>
     public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
 
     /// <summary>Set by the window: shows a Save dialog (suggested file name in); null if the user cancels.</summary>
     public Func<string, (string Path, ExportFormat Format)?> PickExportFile { get; set; } = _ => null;
+
+    /// <summary>Set by the window: Save dialog for a job file (suggested name in); null if cancelled.</summary>
+    public Func<string, string?> PickJobSavePath { get; set; } = _ => null;
+
+    /// <summary>Set by the window: Open dialog for a job file; null if cancelled.</summary>
+    public Func<string?> PickJobOpenPath { get; set; } = () => null;
 
     /// <summary>Set by the window: shows a yes/no/cancel box.</summary>
     public Func<string, string, MessageBoxResult> AskYesNoCancel { get; set; } = (_, _) => MessageBoxResult.Cancel;
@@ -114,6 +127,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private DeviceRow? _selectedDevice;
     [ObservableProperty] private ObjectRow? _selectedObject;
     [ObservableProperty] private string _propertiesHeader = "Properties";
+    [ObservableProperty] private string _jobName = "";
+    [ObservableProperty] private string _jobNotes = "";
+    [ObservableProperty] private string _offlineBanner = "";
     [ObservableProperty] private string _bbmdText = "";
     [ObservableProperty] private string _ttlText = BbmdTarget.DefaultTtlSeconds.ToString();
     [ObservableProperty] private string _bbmdStatus = "";
@@ -188,6 +204,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         IsScanning = true;
         ResetBrowsing();
+        OfflineBanner = "";
         Status = "Sending Who-Is...";
         try
         {
@@ -235,6 +252,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ResetBrowsing()
     {
         _browseCts?.Cancel();
+        _pointCache.Clear();
         Devices.Clear();
         Objects.Clear();
         Properties.Clear();
@@ -250,7 +268,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Properties.Clear();
         PropertiesHeader = "Properties";
         ExportSelectedCommand.NotifyCanExecuteChanged();
-        if (row is null || _svc is null) return;
+        if (row is null) return;
+
+        if (_svc is null)
+        {
+            ShowSavedPoints(row);
+            return;
+        }
 
         var cts = _browseCts = new CancellationTokenSource();
         var name = row.Name == "-" ? $"device {row.Instance}" : row.Name;
@@ -266,6 +290,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             });
             var summaries = await browser.ReadSummariesAsync(ids, progress, cts.Token);
             if (cts.IsCancellationRequested) return;
+            _pointCache[row.Instance] = new ExportDevice(row.Device, row.Name == "-" ? $"Device {row.Instance}" : row.Name, summaries);
             foreach (var s in summaries) Objects.Add(new ObjectRow(s));
             ExportSelectedCommand.NotifyCanExecuteChanged();
             Status = $"{ids.Count} objects in {name}. Select one to see its properties.";
@@ -279,6 +304,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Offline (a job was opened): show the points that were saved, with no network traffic.</summary>
+    private void ShowSavedPoints(DeviceRow row)
+    {
+        if (!_pointCache.TryGetValue(row.Instance, out var saved))
+        {
+            Status = $"Device {row.Instance} was found when the job was saved, but its points were not read. Scan to read them live.";
+            return;
+        }
+        foreach (var s in saved.Objects) Objects.Add(new ObjectRow(s));
+        ExportSelectedCommand.NotifyCanExecuteChanged();
+        Status = $"{saved.Objects.Count} saved objects in {saved.Name}. These are the values from when the job was saved; Scan to read live.";
+    }
+
     partial void OnSelectedObjectChanged(ObjectRow? value) => _ = LoadPropertiesAsync(value);
 
     private async Task LoadPropertiesAsync(ObjectRow? row)
@@ -287,7 +325,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         CanWriteSelected = false;
         if (row is null || SelectedDevice is null || _svc is null)
         {
-            PropertiesHeader = "Properties";
+            PropertiesHeader = row is not null && _svc is null ? "Properties - offline (Scan to read live)" : "Properties";
             return;
         }
 
@@ -311,7 +349,34 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private bool CanExportSelected() => !IsExporting && SelectedDevice is not null && Objects.Count > 0;
 
-    private bool CanExportAll() => !IsExporting && !IsScanning && _svc is not null && Devices.Count > 0;
+    private bool CanExportAll() => !IsExporting && !IsScanning && Devices.Count > 0 && (_svc is not null || _pointCache.Count > 0);
+
+    /// <summary>
+    /// Every device's point list. Live: read now (so values are fresh). Offline (a job is open): the saved points.
+    /// Devices that cannot be read are returned with a reason instead of silently dropped.
+    /// </summary>
+    private async Task<(List<ExportDevice> Devices, List<(DeviceRow Row, string Reason)> Failed)> CollectAllAsync(IProgress<string> progress)
+    {
+        var collected = new List<ExportDevice>();
+        var failed = new List<(DeviceRow, string)>();
+        foreach (var d in Devices.ToList())
+        {
+            if (_svc is null)
+            {
+                if (_pointCache.TryGetValue(d.Instance, out var saved)) collected.Add(saved);
+                else failed.Add((d, "points were not read when the job was saved"));
+                continue;
+            }
+            try
+            {
+                var read = await PointExporter.CollectAsync(_svc.OpenDevice(d.Device), d.Device, progress);
+                _pointCache[d.Instance] = read;
+                collected.Add(read);
+            }
+            catch (Exception ex) { failed.Add((d, ex.Message)); }
+        }
+        return (collected, failed);
+    }
 
     [RelayCommand(CanExecute = nameof(CanExportSelected))]
     private async Task ExportSelectedAsync()
@@ -326,8 +391,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanExportAll))]
     private async Task ExportAllAsync()
     {
-        if (_svc is null) return;
-        var svc = _svc;
         var choice = PickExportFile("all-devices-points");
         if (choice is null)
         {
@@ -338,22 +401,104 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsExporting = true;
         try
         {
-            var collected = new List<ExportDevice>();
-            var failed = new List<string>();
-            var progress = new Progress<string>(m => Status = m);
-            foreach (var d in Devices.ToList())
-            {
-                try { collected.Add(await PointExporter.CollectAsync(svc.OpenDevice(d.Device), d.Device, progress)); }
-                catch (Exception ex) { failed.Add($"device {d.Instance} ({ex.Message})"); }
-            }
+            var (collected, failed) = await CollectAllAsync(new Progress<string>(m => Status = m));
             if (collected.Count == 0)
             {
                 Status = "Could not read any device, so nothing was exported. Likely cause: network drop or the devices stopped answering. Next step: check the connection and try again.";
                 return;
             }
-            await SaveExportAsync(collected, choice.Value, failed);
+            await SaveExportAsync(collected, choice.Value, [.. failed.Select(f => $"device {f.Row.Instance} ({f.Reason})")]);
         }
         finally { IsExporting = false; }
+    }
+
+    [RelayCommand]
+    private async Task SaveJobAsync()
+    {
+        if (Devices.Count == 0)
+        {
+            Status = "There is nothing to save yet. Scan for devices first (or open an existing job).";
+            return;
+        }
+
+        var name = JobName.Trim().Length > 0 ? JobName.Trim() : "BACprobe job";
+        var path = PickJobSavePath(SafeFileName(name));
+        if (path is null)
+        {
+            Status = "Save cancelled.";
+            return;
+        }
+
+        IsExporting = true; // blocks Scan/Export while we read every device
+        try
+        {
+            var (collected, failed) = await CollectAllAsync(new Progress<string>(m => Status = m));
+            var saved = collected.Select(c => SavedDevice.From(c.Device, c.Name, c.Objects))
+                .Concat(failed.Select(f => SavedDevice.From(f.Row.Device, f.Row.Name == "-" ? $"Device {f.Row.Instance}" : f.Row.Name, null)))
+                .OrderBy(d => d.Instance).ToList();
+
+            var sessionLog = _log.Entries;
+            var writeLog = _persistedLog.Concat(sessionLog.Skip(_sessionLogSaved)).ToList();
+            var info = new JobInfo(name, JobNotes.Trim(), _jobCreated, DateTimeOffset.Now,
+                BbmdText.Trim().Length > 0 ? BbmdText.Trim() : null, SelectedAdapter?.Info.Cidr,
+                typeof(MainViewModel).Assembly.GetName().Version?.ToString() ?? "");
+
+            await Task.Run(() => JobFile.Save(path, new JobSnapshot(info, saved, writeLog)));
+            _persistedLog = writeLog;
+            _sessionLogSaved = sessionLog.Count;
+
+            Status = $"Saved job \"{name}\": {saved.Count} device(s), {saved.Sum(d => d.Objects.Count)} object(s) to {path}.";
+            if (failed.Count > 0)
+                Status += $" Points NOT saved for: {string.Join(", ", failed.Select(f => $"{f.Row.Instance} ({f.Reason})"))}.";
+        }
+        catch (JobFileException ex)
+        {
+            Status = ex.Message.Replace("\n", " ");
+        }
+        finally { IsExporting = false; }
+    }
+
+    [RelayCommand]
+    private async Task OpenJobAsync()
+    {
+        if (!await ResolveOverridesAsync()) return;
+        var path = PickJobOpenPath();
+        if (path is null) return;
+
+        JobSnapshot job;
+        try { job = await Task.Run(() => JobFile.Load(path)); }
+        catch (JobFileException ex)
+        {
+            Status = ex.Message.Replace("\n", " ");
+            return;
+        }
+
+        // Opening a job leaves live mode: close the connection and show the saved snapshot.
+        _browseCts?.Cancel();
+        _svc?.Dispose();
+        _svc = null;
+        _writer = null;
+        ResetBrowsing();
+
+        JobName = job.Info.Name;
+        JobNotes = job.Info.Notes;
+        if (job.Info.BbmdText is not null) BbmdText = job.Info.BbmdText;
+        _jobCreated = job.Info.CreatedAt;
+        _persistedLog = [.. job.WriteLog];
+        _sessionLogSaved = _log.Entries.Count;
+        WriteLogLines.Clear();
+        foreach (var e in job.WriteLog) WriteLogLines.Add(e.Text);
+
+        foreach (var d in job.Devices)
+        {
+            Devices.Add(new DeviceRow(d.ToDiscovered()));
+            if (d.PointsRead) _pointCache[d.Instance] = d.ToExportDevice();
+        }
+        UpdateOverrideSummary();
+        OfflineBanner = $"Viewing saved job \"{job.Info.Name}\" from {job.Info.SavedAt.LocalDateTime:yyyy-MM-dd HH:mm}. These values are a snapshot, not live. " +
+                        "Click Scan to connect and read live values.";
+        Status = $"Opened {job.Devices.Count} device(s) from {path}. Select one to see its saved points.";
+        ExportAllCommand.NotifyCanExecuteChanged();
     }
 
     private async Task ExportAsync(IReadOnlyList<ExportDevice> devices, string suggestedName)
