@@ -26,3 +26,6 @@ Desktop.ini
 *.bacprobe
 *.pcap
 *.pcapng
+
+## Manual test screenshots and notes (may show real site data)
+test-results/
