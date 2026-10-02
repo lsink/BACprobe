@@ -73,6 +73,15 @@ public class PreflightRulesTests
     }
 
     [Fact]
+    public void Process_holding_several_sockets_is_named_once()
+    {
+        var probe = new PortProbe(true, null,
+            [new PortOwner(99, "other", "0.0.0.0"), new PortOwner(99, "other", "192.168.1.5")]);
+        var msg = PreflightRules.CheckPort(probe).Message;
+        Assert.Equal(1, msg.Split("other (PID 99)").Length - 1);
+    }
+
+    [Fact]
     public void Shared_port_with_other_process_warns()
     {
         var probe = new PortProbe(true, null, [new PortOwner(99, "other", "0.0.0.0")]);

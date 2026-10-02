@@ -1,6 +1,7 @@
 using System.Net;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Networking;
+using BACprobe.Core.Simulation;
 
 namespace BACprobe.Cli;
 
@@ -13,10 +14,14 @@ internal static class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm]
 
         --adapter  IPv4 address of the NIC to use (default: the only usable adapter, else you must choose).
         --low/--high  Limit Who-Is to a device instance range.
         --wait     Seconds to listen for I-Am replies (default 5).
+        simulate   Run fake BACnet devices on this PC (Ctrl+C to stop) so you can test without hardware.
+                   --devices n (default 2), --first instance (default 1001),
+                   --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
         """;
 
     private static async Task<int> Main(string[] args)
@@ -35,6 +40,7 @@ internal static class Program
                 "adapters" => Adapters(),
                 "preflight" => Preflight(opts),
                 "discover" => await DiscoverAsync(opts),
+                "simulate" => await SimulateAsync(opts),
                 _ => Fail($"Unknown command '{args[0]}'.\n\n{Usage}"),
             };
         }
@@ -120,6 +126,45 @@ internal static class Program
                               $"{d.ModelName ?? "-",-18} {d.FirmwareRevision ?? "-",-12} {d.ObjectName ?? "-"}");
             if (d.EnrichError is not null) Console.WriteLine($"          ! {d.EnrichError}");
         }
+        return 0;
+    }
+
+    private static async Task<int> SimulateAsync(Dictionary<string, string?> opts)
+    {
+        var adapter = PickAdapter(opts);
+        var count = IntOpt(opts, "devices", 2);
+        var first = IntOpt(opts, "first", 1001);
+        if (count < 1 || count > 50) throw new ArgumentException("--devices must be between 1 and 50.");
+
+        var sims = new List<SimulatedDevice>();
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
+                var sim = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)(first + i)), supportRpm: !legacy)
+                {
+                    Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),
+                };
+                sim.Start();
+                sims.Add(sim);
+                Console.WriteLine($"Simulating device {first + i}{(legacy ? " (refuses ReadPropertyMultiple)" : "")} on {adapter.Address}");
+            }
+        }
+        catch (Exception ex)
+        {
+            foreach (var s in sims) s.Dispose();
+            return Fail($"Could not start the simulator: {ex.Message}\n" +
+                        "  Likely cause: another program holds UDP 47808 exclusively.\n" +
+                        "  Next step:    run 'bacprobe preflight' and close the program it names.");
+        }
+
+        Console.WriteLine("Running. Run 'bacprobe discover' (or the app) from another window. Ctrl+C to stop.");
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        try { await Task.Delay(Timeout.Infinite, cts.Token); }
+        catch (OperationCanceledException) { }
+        foreach (var s in sims) s.Dispose();
         return 0;
     }
 

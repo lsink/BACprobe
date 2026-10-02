@@ -67,7 +67,8 @@ public static class PreflightRules
 
     public static PreflightResult CheckPort(PortProbe p)
     {
-        var owners = string.Join(", ", p.Owners.Select(o => $"{o.ProcessName} (PID {o.ProcessId})"));
+        // One process often holds several sockets on the port (shared + unicast); name it once.
+        var owners = string.Join(", ", p.Owners.DistinctBy(o => o.ProcessId).Select(o => $"{o.ProcessName} (PID {o.ProcessId})"));
         if (!p.Bindable)
             return new("UDP 47808", PreflightSeverity.Fail,
                 $"UDP port {BacnetPort} is held exclusively{(owners.Length > 0 ? $" by {owners}" : "")}.",
