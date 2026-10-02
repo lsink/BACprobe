@@ -77,6 +77,10 @@
         <TextBox Text="{Binding TtlText, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="4,0,12,0"
                  ToolTip="How long the BBMD keeps you registered. BACprobe renews automatically." />
         <Button Content="Scan" Padding="20,4" Command="{Binding ScanCommand}" />
+        <Button Content="Export device..." Padding="12,4" Margin="16,0,0,0" Command="{Binding ExportSelectedCommand}"
+                ToolTip="Save the selected device point list as Excel, CSV or EDE." />
+        <Button Content="Export all..." Padding="12,4" Margin="8,0,0,0" Command="{Binding ExportAllCommand}"
+                ToolTip="Read every device found and save one combined point list." />
       </WrapPanel>
       <TextBlock DockPanel.Dock="Top" Text="{Binding BbmdStatus}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
       <Grid>

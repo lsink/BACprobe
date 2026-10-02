@@ -17,6 +17,7 @@ internal static partial class Program
           bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
+          bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
           bacprobe release   --device <instance> --object <type:n> [--priority 8] [--yes]
 
@@ -25,6 +26,8 @@ internal static partial class Program
         --wait     Seconds to listen for I-Am replies (default 5).
         objects    List a device's objects with name, value and units. read: all properties of one object, e.g. --object ai:1
                    (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
+        export     Save a point list: csv, xlsx (Excel, with a Devices sheet) or ede. Default file: bacprobe-points-<time>.csv
+                   in the current folder; an existing file is never overwritten without --force.
         write      Overrides a point (asks you to confirm in plain English; default priority 8 = Manual Operator).
                    release gives it back. Every write is logged to %LOCALAPPDATA%BACprobewrite-log.txt.
         --bbmd     Register as a foreign device with a BBMD so Who-Is reaches other subnets (objects/read/write accept it too).
@@ -54,6 +57,7 @@ internal static partial class Program
                 "simulate" => await SimulateAsync(opts),
                 "objects" => await ObjectsAsync(opts),
                 "read" => await ReadAsync(opts),
+                "export" => await ExportAsync(opts),
                 "write" => await WriteAsync(opts),
                 "release" => await ReleaseAsync(opts),
                 _ => Fail($"Unknown command '{args[0]}'.\n\n{Usage}"),

@@ -11,6 +11,8 @@ public sealed class ObjectSummary
     public string? Description { get; set; }
     public string? PresentValue { get; set; }
     public string? Units { get; set; }
+    /// <summary>The raw BACnet engineering-units code (used by EDE export).</summary>
+    public uint? UnitsCode { get; set; }
     public string TypeName => BacnetNames.ObjectTypeName(Id.type);
     public string Label => BacnetNames.ObjectLabel(Id);
     /// <summary>Present value with units, e.g. "72.4 °F".</summary>
@@ -115,7 +117,10 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             case BacnetPropertyIds.PROP_OBJECT_NAME: s.Name = text; break;
             case BacnetPropertyIds.PROP_DESCRIPTION: s.Description = text; break;
             case BacnetPropertyIds.PROP_PRESENT_VALUE: s.PresentValue = text; break;
-            case BacnetPropertyIds.PROP_UNITS: s.Units = text; break;
+            case BacnetPropertyIds.PROP_UNITS:
+                s.Units = text;
+                if (values[0].Value is IConvertible code) s.UnitsCode = Convert.ToUInt32(code, System.Globalization.CultureInfo.InvariantCulture);
+                break;
         }
     }
 

@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using BACprobe.Core.Bbmd;
 using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
+using BACprobe.Core.Export;
 using BACprobe.Core.Networking;
 using BACprobe.Core.Writing;
 using System.IO.BACnet;
@@ -67,6 +69,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: shows a yes/no box, returns true for yes.</summary>
     public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
 
+    /// <summary>Set by the window: shows a Save dialog (suggested file name in); null if the user cancels.</summary>
+    public Func<string, (string Path, ExportFormat Format)?> PickExportFile { get; set; } = _ => null;
+
     /// <summary>Set by the window: shows a yes/no/cancel box.</summary>
     public Func<string, string, MessageBoxResult> AskYesNoCancel { get; set; } = (_, _) => MessageBoxResult.Cancel;
 
@@ -93,6 +98,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
     private bool _isScanning;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ScanCommand), nameof(ExportSelectedCommand), nameof(ExportAllCommand))]
+    private bool _isExporting;
 
     [ObservableProperty] private PriorityChoice _selectedPriority = PriorityChoice.Default;
     [ObservableProperty] private string _writeValueText = "";
@@ -149,7 +158,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Status = PreflightPassed ? "Ready. Click Scan to find devices." : "Fix the red items above, then click Re-check.";
     }
 
-    private bool CanScan() => SelectedAdapter is not null && PreflightPassed && !IsScanning;
+    private bool CanScan() => SelectedAdapter is not null && PreflightPassed && !IsScanning && !IsExporting;
 
     [RelayCommand(CanExecute = nameof(CanScan))]
     private async Task ScanAsync()
@@ -208,6 +217,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Status = $"{found.Count} device(s) found. Reading details...";
             await svc.EnrichAsync(found);
             foreach (var d in found) Devices.Add(new DeviceRow(d));
+            ExportAllCommand.NotifyCanExecuteChanged();
             Status = $"{found.Count} device(s) found. Select one to see its objects.";
         }
         catch (Exception ex)
@@ -215,7 +225,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Status = $"Scan failed: {ex.Message}. Likely cause: another program holds UDP 47808 or the adapter address changed. " +
                      "Next step: close other BACnet tools and click Re-check.";
         }
-        finally { IsScanning = false; }
+        finally
+        {
+            IsScanning = false;
+            ExportAllCommand.NotifyCanExecuteChanged();
+        }
     }
 
     private void ResetBrowsing()
@@ -235,6 +249,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Objects.Clear();
         Properties.Clear();
         PropertiesHeader = "Properties";
+        ExportSelectedCommand.NotifyCanExecuteChanged();
         if (row is null || _svc is null) return;
 
         var cts = _browseCts = new CancellationTokenSource();
@@ -252,6 +267,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var summaries = await browser.ReadSummariesAsync(ids, progress, cts.Token);
             if (cts.IsCancellationRequested) return;
             foreach (var s in summaries) Objects.Add(new ObjectRow(s));
+            ExportSelectedCommand.NotifyCanExecuteChanged();
             Status = $"{ids.Count} objects in {name}. Select one to see its properties.";
         }
         catch (OperationCanceledException) { }
@@ -292,6 +308,85 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Status = $"Could not read {label}: {ex.Message}. Likely cause: the device refused the request or stopped answering. Next step: try again.";
         }
     }
+
+    private bool CanExportSelected() => !IsExporting && SelectedDevice is not null && Objects.Count > 0;
+
+    private bool CanExportAll() => !IsExporting && !IsScanning && _svc is not null && Devices.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanExportSelected))]
+    private async Task ExportSelectedAsync()
+    {
+        var row = SelectedDevice;
+        if (row is null) return;
+        var device = new ExportDevice(row.Device, row.Name == "-" ? $"Device {row.Instance}" : row.Name,
+            Objects.Select(o => o.Summary).ToList());
+        await ExportAsync([device], $"{SafeFileName(device.Name)}-points");
+    }
+
+    [RelayCommand(CanExecute = nameof(CanExportAll))]
+    private async Task ExportAllAsync()
+    {
+        if (_svc is null) return;
+        var svc = _svc;
+        var choice = PickExportFile("all-devices-points");
+        if (choice is null)
+        {
+            Status = "Export cancelled.";
+            return;
+        }
+
+        IsExporting = true;
+        try
+        {
+            var collected = new List<ExportDevice>();
+            var failed = new List<string>();
+            var progress = new Progress<string>(m => Status = m);
+            foreach (var d in Devices.ToList())
+            {
+                try { collected.Add(await PointExporter.CollectAsync(svc.OpenDevice(d.Device), d.Device, progress)); }
+                catch (Exception ex) { failed.Add($"device {d.Instance} ({ex.Message})"); }
+            }
+            if (collected.Count == 0)
+            {
+                Status = "Could not read any device, so nothing was exported. Likely cause: network drop or the devices stopped answering. Next step: check the connection and try again.";
+                return;
+            }
+            await SaveExportAsync(collected, choice.Value, failed);
+        }
+        finally { IsExporting = false; }
+    }
+
+    private async Task ExportAsync(IReadOnlyList<ExportDevice> devices, string suggestedName)
+    {
+        var choice = PickExportFile(suggestedName);
+        if (choice is null)
+        {
+            Status = "Export cancelled.";
+            return;
+        }
+
+        IsExporting = true;
+        try { await SaveExportAsync(devices, choice.Value, []); }
+        finally { IsExporting = false; }
+    }
+
+    private async Task SaveExportAsync(IReadOnlyList<ExportDevice> devices, (string Path, ExportFormat Format) choice, List<string> failed)
+    {
+        try
+        {
+            await Task.Run(() => PointExporter.Write(choice.Path, choice.Format, devices));
+            var points = devices.Sum(d => d.Points.Count());
+            Status = $"Exported {points} point(s) from {devices.Count} device(s) to {choice.Path}.";
+            if (failed.Count > 0) Status += $" NOT included: {string.Join("; ", failed)}.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Status = $"Could not save the file: {ex.Message} Likely cause: it is open in Excel, or the folder is read-only. Next step: close the file or choose another location.";
+        }
+    }
+
+    private static string SafeFileName(string name) =>
+        string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 
     [RelayCommand(CanExecute = nameof(CanWriteSelected))]
     private Task WriteSelectedAsync() => DoWriteAsync(release: false);

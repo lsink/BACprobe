@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
+using BACprobe.Core.Export;
+using Microsoft.Win32;
 
 namespace BACprobe.App;
 
@@ -14,6 +16,20 @@ public partial class MainWindow : Window
         {
             vm.Confirm = (title, text) =>
                 MessageBox.Show(this, text, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+            vm.PickExportFile = suggested =>
+            {
+                var dialog = new SaveFileDialog
+                {
+                    Title = "Export point list",
+                    FileName = suggested,
+                    Filter = "Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|EDE file (*.csv)|*.csv",
+                    AddExtension = true,
+                    OverwritePrompt = true,
+                };
+                if (dialog.ShowDialog(this) != true) return null;
+                var format = dialog.FilterIndex switch { 1 => ExportFormat.Xlsx, 3 => ExportFormat.Ede, _ => ExportFormat.Csv };
+                return (dialog.FileName, format);
+            };
             vm.AskYesNoCancel = (title, text) =>
                 MessageBox.Show(this, text, title, MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
         }

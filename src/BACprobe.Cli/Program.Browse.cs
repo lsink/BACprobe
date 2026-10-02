@@ -79,29 +79,8 @@ internal static partial class Program
         if (!opts.TryGetValue("device", out var text) || !int.TryParse(text, out var instance) || instance is < 0 or > 4194302)
             throw new ArgumentException("Say which device with --device <instance number>. 'bacprobe discover' lists them.");
 
-        var adapter = PickAdapter(opts);
-        var bbmd = ParseBbmd(opts);
-        var results = Core.Networking.Preflight.Run(adapter);
-        if (!PreflightRules.CanProceed(results))
-        {
-            PrintPreflight(adapter);
-            return (null, null, "Fix the failures above, then try again.");
-        }
-
-        var svc = new DiscoveryService(adapter);
-        try
-        {
-            svc.Start();
-        }
-        catch (Exception ex)
-        {
-            svc.Dispose();
-            return (null, null, $"Could not open the BACnet socket: {ex.Message}\n" +
-                                "  Likely cause: another program holds UDP 47808 exclusively.\n" +
-                                "  Next step:    run 'bacprobe preflight' and close the program it names.");
-        }
-
-        if (bbmd is not null) await RegisterWithBbmdAsync(svc, adapter, bbmd);
+        var (svc, error) = await OpenSessionAsync(opts);
+        if (svc is null) return (null, null, error);
 
         var wait = IntOpt(opts, "wait", 3);
         var found = await svc.WhoIsAsync(instance, instance, TimeSpan.FromSeconds(wait));
@@ -114,6 +93,35 @@ internal static partial class Program
                                 "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
         }
         return (svc, device, null);
+    }
+
+    /// <summary>Pick the adapter, run pre-flight, open the BACnet socket and (if asked) register with a BBMD.</summary>
+    private static async Task<(DiscoveryService?, string?)> OpenSessionAsync(Dictionary<string, string?> opts)
+    {
+        var adapter = PickAdapter(opts);
+        var bbmd = ParseBbmd(opts);
+        var results = Core.Networking.Preflight.Run(adapter);
+        if (!PreflightRules.CanProceed(results))
+        {
+            PrintPreflight(adapter);
+            return (null, "Fix the failures above, then try again.");
+        }
+
+        var svc = new DiscoveryService(adapter);
+        try
+        {
+            svc.Start();
+        }
+        catch (Exception ex)
+        {
+            svc.Dispose();
+            return (null, $"Could not open the BACnet socket: {ex.Message}\n" +
+                          "  Likely cause: another program holds UDP 47808 exclusively.\n" +
+                          "  Next step:    run 'bacprobe preflight' and close the program it names.");
+        }
+
+        if (bbmd is not null) await RegisterWithBbmdAsync(svc, adapter, bbmd);
+        return (svc, null);
     }
 
     private static string ReadFailure(Exception ex) =>
