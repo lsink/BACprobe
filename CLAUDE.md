@@ -54,3 +54,21 @@ Gate: a new tech finds and safely overrides a point with no help.
 - Build with `dotnet build BACprobe.slnx`; run tests with `dotnet test`.
 - Keep Core free of WPF references so it stays testable.
 - Commit messages: short imperative subject line.
+
+## Phase 1 status (all 4 scope items built; only the gate test remains)
+Everything below was verified against `bacprobe simulate` (fake devices + fake BBMD) only. No real device has been tried yet.
+The gate ("a new tech finds and safely overrides a point with no help") is described in `docs/gate-test-plan.md`.
+
+Core layout (`src/BACprobe.Core`): `Networking` (adapters, pre-flight rules, port owner), `Discovery` (Who-Is, enrich),
+`Browsing` (object list, properties, `BacnetNames` formatting), `Writing` (confirmation text, write log, override tracker),
+`Bbmd` (foreign-device registration), `Export` (CSV/xlsx/EDE), `Jobs` (SQLite `.bacprobe`), `Simulation`.
+CLI commands: adapters, preflight, discover, objects, read, write, release, export, job (save|show), simulate.
+
+Learned the hard way:
+- BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
+- `BacnetClient.WritePropertyAsync` takes `byte?` priority.
+- ClosedXML's `SaveAs(path)` rejects non-.xlsx extensions; save to a stream (the exporter writes a temp file first).
+- SQLite: use `Pooling=False`, or the job file stays locked after Dispose.
+- Text from devices is untrusted: parameterised SQL always, and neutralise leading `= + - @` in CSV.
+- WPF projects do not implicitly import `System.IO`.
+- EDE layout was written from memory of the common format and is unverified against a real consumer.
