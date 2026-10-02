@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BACprobe.App/BACprobe.App.csproj" />
+    <Project Path="src/BACprobe.Cli/BACprobe.Cli.csproj" />
+    <Project Path="src/BACprobe.Core/BACprobe.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BACprobe.Core.Tests/BACprobe.Core.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,9 @@
+<Window x:Class="BACprobe.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="BACprobe" Height="600" Width="960">
+  <Grid Margin="24">
+    <TextBlock FontSize="20" TextWrapping="Wrap"
+               Text="BACprobe - Phase 1 scaffold. The connect wizard and device tree come next; use the CLI (bacprobe discover) for now." />
+  </Grid>
+</Window>

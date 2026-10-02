@@ -1,0 +1,170 @@
+using System.Net;
+using BACprobe.Core.Discovery;
+using BACprobe.Core.Networking;
+
+namespace BACprobe.Cli;
+
+internal static class Program
+{
+    private const string Usage = """
+        bacprobe - BACnet/IP test harness
+
+        Usage:
+          bacprobe adapters
+          bacprobe preflight [--adapter <ip>]
+          bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details]
+
+        --adapter  IPv4 address of the NIC to use (default: the only usable adapter, else you must choose).
+        --low/--high  Limit Who-Is to a device instance range.
+        --wait     Seconds to listen for I-Am replies (default 5).
+        """;
+
+    private static async Task<int> Main(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
+        {
+            Console.WriteLine(Usage);
+            return args.Length == 0 ? 1 : 0;
+        }
+
+        var opts = ParseOptions(args.Skip(1).ToArray());
+        try
+        {
+            return args[0].ToLowerInvariant() switch
+            {
+                "adapters" => Adapters(),
+                "preflight" => Preflight(opts),
+                "discover" => await DiscoverAsync(opts),
+                _ => Fail($"Unknown command '{args[0]}'.\n\n{Usage}"),
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return Fail(ex.Message);
+        }
+    }
+
+    private static int Adapters()
+    {
+        var all = AdapterEnumerator.GetAdapters();
+        Console.WriteLine($"{"Address",-16} {"Network",-18} {"State",-5} {"Type",-8} Name");
+        foreach (var a in all)
+            Console.WriteLine($"{a.Address,-16} {a.Cidr,-18} {(a.IsUp ? "up" : "down"),-5} {(a.IsVirtual ? "virtual" : "physical"),-8} {a.Name} - {a.Description}");
+        return 0;
+    }
+
+    private static int Preflight(Dictionary<string, string?> opts)
+    {
+        var adapter = PickAdapter(opts);
+        return PrintPreflight(adapter) ? 0 : 2;
+    }
+
+    private static bool PrintPreflight(AdapterInfo adapter)
+    {
+        Console.WriteLine($"Pre-flight for {adapter.Name} ({adapter.Address}, {adapter.Cidr})");
+        var results = Core.Networking.Preflight.Run(adapter);
+        foreach (var r in results)
+        {
+            var tag = r.Severity switch { PreflightSeverity.Pass => "PASS", PreflightSeverity.Warning => "WARN", _ => "FAIL" };
+            Console.WriteLine($"  [{tag}] {r.Check}: {r.Message}");
+            if (r.LikelyCause is not null) Console.WriteLine($"         Likely cause: {r.LikelyCause}");
+            if (r.NextStep is not null) Console.WriteLine($"         Next step:    {r.NextStep}");
+        }
+        return PreflightRules.CanProceed(results);
+    }
+
+    private static async Task<int> DiscoverAsync(Dictionary<string, string?> opts)
+    {
+        var adapter = PickAdapter(opts);
+        if (!PrintPreflight(adapter))
+        {
+            Console.WriteLine("\nFix the failures above, then run discover again.");
+            return 2;
+        }
+
+        var low = IntOpt(opts, "low", -1);
+        var high = IntOpt(opts, "high", -1);
+        if ((low < 0) != (high < 0)) throw new ArgumentException("Give both --low and --high, or neither.");
+        var wait = IntOpt(opts, "wait", 5);
+
+        Console.WriteLine($"\nSending Who-Is{(low >= 0 ? $" {low}-{high}" : "")} to {adapter.Broadcast}, listening {wait}s...");
+        using var svc = new DiscoveryService(adapter);
+        try { svc.Start(); }
+        catch (Exception ex)
+        {
+            return Fail($"Could not open the BACnet socket: {ex.Message}\n" +
+                        "  Likely cause: another program holds UDP 47808, or the adapter address changed.\n" +
+                        "  Next step:    close other BACnet tools and re-run 'bacprobe preflight'.");
+        }
+
+        var devices = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(wait));
+        if (devices.Count == 0)
+        {
+            Console.WriteLine("No devices answered.");
+            Console.WriteLine("  Likely cause: wrong adapter/subnet, a firewall blocking UDP 47808, or devices on another subnet behind a BBMD.");
+            Console.WriteLine("  Next step:    check the adapter with 'bacprobe adapters', allow bacprobe through Windows Firewall, or try a longer --wait.");
+            return 3;
+        }
+
+        if (!opts.ContainsKey("no-details"))
+        {
+            Console.WriteLine($"{devices.Count} device(s) found; reading details...");
+            await svc.EnrichAsync(devices);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"{"Instance",-9} {"Address",-22} {"Vendor",-24} {"Model",-18} {"Firmware",-12} Name");
+        foreach (var d in devices)
+        {
+            Console.WriteLine($"{d.InstanceId,-9} {d.AddressText,-22} {d.VendorName ?? $"vendor {d.VendorId}",-24} " +
+                              $"{d.ModelName ?? "-",-18} {d.FirmwareRevision ?? "-",-12} {d.ObjectName ?? "-"}");
+            if (d.EnrichError is not null) Console.WriteLine($"          ! {d.EnrichError}");
+        }
+        return 0;
+    }
+
+    private static AdapterInfo PickAdapter(Dictionary<string, string?> opts)
+    {
+        var all = AdapterEnumerator.GetAdapters();
+        if (opts.TryGetValue("adapter", out var ip) && ip is not null)
+        {
+            if (!IPAddress.TryParse(ip, out var addr))
+                throw new ArgumentException($"'{ip}' is not an IPv4 address. Run 'bacprobe adapters' to see the choices.");
+            return all.FirstOrDefault(a => a.Address.Equals(addr))
+                   ?? throw new ArgumentException($"No adapter has address {ip}. Run 'bacprobe adapters' to see the choices.");
+        }
+
+        var usable = all.Where(a => a.IsUp && !a.IsLoopback && !Subnet.IsLinkLocal(a.Address)).ToList();
+        var physical = usable.Where(a => !a.IsVirtual).ToList();
+        var pool = physical.Count > 0 ? physical : usable;
+        if (pool.Count == 1) return pool[0];
+        throw new ArgumentException(pool.Count == 0
+            ? "No usable network adapter found. Connect to the building network, or run 'bacprobe adapters'."
+            : "More than one adapter could be used. Choose one with --adapter <ip>:\n  " +
+              string.Join("\n  ", pool.Select(a => $"{a.Address}  {a.Name}")));
+    }
+
+    private static Dictionary<string, string?> ParseOptions(string[] args)
+    {
+        var opts = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (!args[i].StartsWith("--", StringComparison.Ordinal)) continue;
+            var key = args[i][2..];
+            opts[key] = i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal) ? args[++i] : null;
+        }
+        return opts;
+    }
+
+    private static int IntOpt(Dictionary<string, string?> opts, string key, int fallback)
+    {
+        if (!opts.TryGetValue(key, out var v)) return fallback;
+        return int.TryParse(v, out var n) && n >= -1 ? n : throw new ArgumentException($"--{key} needs a number.");
+    }
+
+    private static int Fail(string message)
+    {
+        Console.Error.WriteLine(message);
+        return 1;
+    }
+}
