@@ -119,6 +119,9 @@ public sealed record WriteRequest(
         }
     }
 
+    /// <summary>What the confirm button says, so it is never just "Yes": "Write at priority 8" or "Release".</summary>
+    public string ConfirmLabel => IsRelease ? "Release" : $"Write at priority {Priority}";
+
     public string Consequence => IsRelease
         ? "The point goes back to whatever the next-highest priority (or the controller's own program) says."
         : "This overrides the controller's automatic control of this point until you release it.";

@@ -1,7 +1,7 @@
-<Window x:Class="BACprobe.App.ConfirmWriteWindow"
+<Window x:Class="BACprobe.App.PromptWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="{Binding WindowTitle}" Width="500" SizeToContent="Height"
+        Title="{Binding WindowTitle}" Width="520" SizeToContent="Height"
         ResizeMode="NoResize" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
   <Grid Margin="24,20,24,20">
     <Grid.RowDefinitions>
@@ -14,35 +14,31 @@
 
     <TextBlock Grid.Row="0" Text="{Binding Headline}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
 
-    <!-- The facts a tech should check: device, point, current and new value, priority. -->
-    <ItemsControl Grid.Row="1" ItemsSource="{Binding Facts}" Margin="0,16,0,0" Grid.IsSharedSizeScope="True">
+    <!-- The details to check, as label / value rows -->
+    <ItemsControl Grid.Row="1" ItemsSource="{Binding Facts}" Margin="0,16,0,0" Grid.IsSharedSizeScope="True"
+                  Visibility="{Binding FactsVisibility}">
       <ItemsControl.ItemTemplate>
         <DataTemplate>
           <Grid Margin="0,3">
             <Grid.ColumnDefinitions>
-              <ColumnDefinition SharedSizeGroup="FactLabel" Width="Auto" />
+              <ColumnDefinition SharedSizeGroup="FactLabel" Width="Auto" MaxWidth="200" />
               <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.65" Margin="0,0,16,0" />
+            <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.65" Margin="0,0,16,0" TextWrapping="Wrap" />
             <TextBlock Grid.Column="1" Text="{Binding Value}" FontWeight="SemiBold" TextWrapping="Wrap" />
           </Grid>
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
-    <TextBlock Grid.Row="2" Text="{Binding Consequence}" TextWrapping="Wrap" Opacity="0.85" Margin="0,16,0,0" />
+    <TextBlock Grid.Row="2" Text="{Binding Body}" TextWrapping="Wrap" Opacity="0.85" Margin="0,16,0,0" />
 
     <Border Grid.Row="3" Margin="0,14,0,0" Padding="12,10" CornerRadius="4" BorderThickness="1"
-            BorderBrush="Firebrick" Background="#22B22222"
-            Visibility="{Binding WarningVisibility}">
+            BorderBrush="Firebrick" Background="#22B22222" Visibility="{Binding WarningVisibility}">
       <TextBlock Text="{Binding Warning}" TextWrapping="Wrap" FontWeight="SemiBold" />
     </Border>
 
-    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-      <Button x:Name="ConfirmButton" Content="{Binding ConfirmText}" MinWidth="120" Padding="16,6"
-              Click="OnConfirm" />
-      <Button x:Name="CancelButton" Content="Cancel" MinWidth="90" Padding="16,6" Margin="10,0,0,0"
-              IsCancel="True" Click="OnCancel" />
-    </StackPanel>
+    <!-- Buttons are added in code: the caller says what each one does -->
+    <StackPanel x:Name="ButtonPanel" Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0" />
   </Grid>
 </Window>

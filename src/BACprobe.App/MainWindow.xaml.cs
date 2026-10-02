@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using BACprobe.Core.Export;
+using BACprobe.Core.Writing;
 using Microsoft.Win32;
 
 namespace BACprobe.App;
@@ -14,23 +15,35 @@ public partial class MainWindow : Window
         InitializeComponent();
         if (DataContext is MainViewModel vm)
         {
-            vm.Confirm = (title, text) =>
-                MessageBox.Show(this, text, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+            // Every confirmation goes through PromptWindow, so they all look and read the same.
             vm.ConfirmWrite = request =>
             {
                 try
                 {
-                    var dialog = new ConfirmWriteWindow(request) { Owner = this };
-                    return dialog.ShowDialog() == true;
+                    // Life-safety priorities start with Cancel focused, so a stray Enter cannot confirm.
+                    return PromptWindow.Show(this, Prompts.ForWrite(request),
+                        [new PromptButton(request.ConfirmLabel), new PromptButton("Cancel", IsCancel: true)],
+                        focusIndex: request.Warning is null ? 0 : 1) == 0;
                 }
                 catch (Exception ex)
                 {
-                    // Never let a broken dialog look like "nothing happened", and never write without a confirmation.
-                    MessageBox.Show(this, $"BACprobe could not show the confirmation, so nothing was written.\n\n{ex.Message}",
+                    // Last resort, so a broken dialog never looks like "nothing happened" and never writes without a confirmation.
+                    MessageBox.Show(this, "BACprobe could not show the confirmation, so nothing was written." + Environment.NewLine + Environment.NewLine + ex.Message,
                         "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
                     return false;
                 }
             };
+            vm.AskOverrides = overrides => PromptWindow.Show(this, Prompts.OverridesInPlace(overrides),
+                overrides.Count == 1
+                    ? [new PromptButton("Release it"), new PromptButton("Leave it in place"), new PromptButton("Go back", IsCancel: true)]
+                    : [new PromptButton("Release them"), new PromptButton("Leave them in place"), new PromptButton("Go back", IsCancel: true)]) switch
+            {
+                0 => OverrideChoice.Release,
+                1 => OverrideChoice.Leave,
+                _ => OverrideChoice.GoBack,
+            };
+            vm.ConfirmContinueAfterFailedRelease = failed => PromptWindow.Show(this, Prompts.ReleaseFailed(failed),
+                [new PromptButton("Go back", IsCancel: true), new PromptButton("Continue anyway")]) == 1;
             vm.PickExportFile = suggested =>
             {
                 var dialog = new SaveFileDialog
@@ -68,8 +81,6 @@ public partial class MainWindow : Window
                 };
                 return dialog.ShowDialog(this) == true ? dialog.FileName : null;
             };
-            vm.AskYesNoCancel = (title, text) =>
-                MessageBox.Show(this, text, title, MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
         }
     }
 

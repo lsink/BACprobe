@@ -64,6 +64,9 @@ public sealed class ObjectRow(ObjectSummary s) : ObservableObject
     }
 }
 
+/// <summary>What the user chose when asked about overrides they are about to walk away from.</summary>
+public enum OverrideChoice { Release, Leave, GoBack }
+
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private DiscoveryService? _svc;
@@ -78,9 +81,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private List<WriteLogEntry> _persistedLog = [];
     private int _sessionLogSaved;
 
-    /// <summary>Set by the window: shows a yes/no box, returns true for yes.</summary>
-    public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
-
     /// <summary>Set by the window: the write/release confirmation dialog; true if the user confirmed.</summary>
     public Func<WriteRequest, bool> ConfirmWrite { get; set; } = _ => false;
 
@@ -93,8 +93,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: Open dialog for a job file; null if cancelled.</summary>
     public Func<string?> PickJobOpenPath { get; set; } = () => null;
 
-    /// <summary>Set by the window: shows a yes/no/cancel box.</summary>
-    public Func<string, string, MessageBoxResult> AskYesNoCancel { get; set; } = (_, _) => MessageBoxResult.Cancel;
+    /// <summary>Set by the window: asks what to do about overrides this session left in place.</summary>
+    public Func<IReadOnlyList<TrackedOverride>, OverrideChoice> AskOverrides { get; set; } = _ => OverrideChoice.GoBack;
+
+    /// <summary>Set by the window: some overrides could not be released; true to continue anyway.</summary>
+    public Func<int, bool> ConfirmContinueAfterFailedRelease { get; set; } = _ => false;
 
     public IReadOnlyList<PriorityChoice> PriorityChoices { get; } = PriorityChoice.All;
 
@@ -668,20 +671,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var active = _overrides.Active;
         if (active.Count == 0 || _writer is null) return true;
 
-        var text = $"This session left {active.Count} override(s) in place:\n\n" +
-                   string.Join("\n", active.Select(o => "  - " + o.Description)) +
-                   "\n\nRelease them now?\nYes = release them, No = leave them in place, Cancel = go back.";
-        switch (AskYesNoCancel("Overrides still in place", text))
+        switch (AskOverrides(active))
         {
-            case MessageBoxResult.Cancel:
+            case OverrideChoice.GoBack:
                 return false;
-            case MessageBoxResult.Yes:
+            case OverrideChoice.Release:
                 var (_, failed) = await _writer.ReleaseAllAsync();
                 UpdateOverrideSummary();
-                return failed == 0 || Confirm("Some overrides could not be released",
-                    $"{failed} override(s) could not be released (see the write log). They are still in place on the device.\n\nContinue anyway?");
+                return failed == 0 || ConfirmContinueAfterFailedRelease(failed);
             default:
-                return true;
+                return true; // leave them in place, on purpose
         }
     }
 
