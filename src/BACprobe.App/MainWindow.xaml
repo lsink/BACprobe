@@ -63,14 +63,22 @@
     </ItemsControl>
 
     <DockPanel Grid.Row="3">
-      <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+      <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
         <TextBlock Text="2. Find devices" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0" />
         <TextBlock Text="Instance range (optional):" VerticalAlignment="Center" />
         <TextBox Text="{Binding LowText, UpdateSourceTrigger=PropertyChanged}" Width="70" Margin="8,0,4,0" />
         <TextBlock Text="to" VerticalAlignment="Center" />
         <TextBox Text="{Binding HighText, UpdateSourceTrigger=PropertyChanged}" Width="70" Margin="4,0,12,0" />
+        <TextBlock Text="BBMD (optional):" VerticalAlignment="Center" Margin="16,0,0,0"
+                   ToolTip="Only for devices on other subnets. Ask the site contact for the BBMD's IP address." />
+        <TextBox Text="{Binding BbmdText, UpdateSourceTrigger=PropertyChanged}" Width="150" Margin="8,0,4,0"
+                 ToolTip="IP address, or IP:port, of the site's BBMD. Leave empty for the local subnet only." />
+        <TextBlock Text="TTL (s):" VerticalAlignment="Center" />
+        <TextBox Text="{Binding TtlText, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="4,0,12,0"
+                 ToolTip="How long the BBMD keeps you registered. BACprobe renews automatically." />
         <Button Content="Scan" Padding="20,4" Command="{Binding ScanCommand}" />
-      </StackPanel>
+      </WrapPanel>
+      <TextBlock DockPanel.Dock="Top" Text="{Binding BbmdStatus}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="2*" MinHeight="80" />

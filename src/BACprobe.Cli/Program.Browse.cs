@@ -80,6 +80,7 @@ internal static partial class Program
             throw new ArgumentException("Say which device with --device <instance number>. 'bacprobe discover' lists them.");
 
         var adapter = PickAdapter(opts);
+        var bbmd = ParseBbmd(opts);
         var results = Core.Networking.Preflight.Run(adapter);
         if (!PreflightRules.CanProceed(results))
         {
@@ -99,6 +100,8 @@ internal static partial class Program
                                 "  Likely cause: another program holds UDP 47808 exclusively.\n" +
                                 "  Next step:    run 'bacprobe preflight' and close the program it names.");
         }
+
+        if (bbmd is not null) await RegisterWithBbmdAsync(svc, adapter, bbmd);
 
         var wait = IntOpt(opts, "wait", 3);
         var found = await svc.WhoIsAsync(instance, instance, TimeSpan.FromSeconds(wait));

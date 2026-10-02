@@ -13,8 +13,8 @@ internal static partial class Program
         Usage:
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
-          bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm]
+          bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--bbmd <ip[:port]> [--ttl <s>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
@@ -27,9 +27,12 @@ internal static partial class Program
                    (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
         write      Overrides a point (asks you to confirm in plain English; default priority 8 = Manual Operator).
                    release gives it back. Every write is logged to %LOCALAPPDATA%BACprobewrite-log.txt.
+        --bbmd     Register as a foreign device with a BBMD so Who-Is reaches other subnets (objects/read/write accept it too).
+                   --ttl is how long the BBMD keeps you (default 300 s); BACprobe renews automatically.
         simulate   Run fake BACnet devices on this PC (Ctrl+C to stop) so you can test without hardware.
                    --devices n (default 2), --first instance (default 1001),
                    --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
+                   --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
         """;
 
     private static async Task<int> Main(string[] args)
@@ -104,8 +107,9 @@ internal static partial class Program
         var high = IntOpt(opts, "high", -1);
         if ((low < 0) != (high < 0)) throw new ArgumentException("Give both --low and --high, or neither.");
         var wait = IntOpt(opts, "wait", 5);
+        var bbmd = ParseBbmd(opts);
 
-        Console.WriteLine($"\nSending Who-Is{(low >= 0 ? $" {low}-{high}" : "")} to {adapter.Broadcast}, listening {wait}s...");
+        Console.WriteLine();
         using var svc = new DiscoveryService(adapter);
         try { svc.Start(); }
         catch (Exception ex)
@@ -114,6 +118,10 @@ internal static partial class Program
                         "  Likely cause: another program holds UDP 47808, or the adapter address changed.\n" +
                         "  Next step:    close other BACnet tools and re-run 'bacprobe preflight'.");
         }
+
+        if (bbmd is not null) await RegisterWithBbmdAsync(svc, adapter, bbmd);
+        Console.WriteLine($"Sending Who-Is{(low >= 0 ? $" {low}-{high}" : "")} to {adapter.Broadcast}" +
+                          $"{(svc.BbmdRegistration is { IsRegistered: true } ? $" and via BBMD {bbmd}" : "")}, listening {wait}s...");
 
         var devices = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(wait));
         if (devices.Count == 0)
@@ -149,8 +157,22 @@ internal static partial class Program
         if (count < 1 || count > 50) throw new ArgumentException("--devices must be between 1 and 50.");
 
         var sims = new List<SimulatedDevice>();
+        SimulatedBbmd? bbmdSim = null;
         try
         {
+            if (opts.ContainsKey("bbmd") || opts.ContainsKey("bbmd-refuse"))
+            {
+                var bbmdPort = IntOpt(opts, "bbmd-port", 47809);
+                bbmdSim = new SimulatedBbmd(adapter, bbmdPort, refuseRegistrations: opts.ContainsKey("bbmd-refuse"))
+                {
+                    Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),
+                };
+                bbmdSim.Start();
+                Console.WriteLine($"Simulating a BBMD on {adapter.Address}:{bbmdPort}" +
+                                  $"{(opts.ContainsKey("bbmd-refuse") ? " (refuses foreign devices)" : "")}." +
+                                  $" Try: bacprobe discover --bbmd {adapter.Address}:{bbmdPort}");
+            }
+
             for (var i = 0; i < count; i++)
             {
                 var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
@@ -166,6 +188,7 @@ internal static partial class Program
         catch (Exception ex)
         {
             foreach (var s in sims) s.Dispose();
+            bbmdSim?.Dispose();
             return Fail($"Could not start the simulator: {ex.Message}\n" +
                         "  Likely cause: another program holds UDP 47808 exclusively.\n" +
                         "  Next step:    run 'bacprobe preflight' and close the program it names.");
@@ -177,6 +200,7 @@ internal static partial class Program
         try { await Task.Delay(Timeout.Infinite, cts.Token); }
         catch (OperationCanceledException) { }
         foreach (var s in sims) s.Dispose();
+        bbmdSim?.Dispose();
         return 0;
     }
 

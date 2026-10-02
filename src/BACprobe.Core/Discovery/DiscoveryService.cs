@@ -7,17 +7,31 @@ namespace BACprobe.Core.Discovery;
 public sealed class DiscoveryService : IDisposable
 {
     private readonly BacnetClient _client;
+    private readonly BacnetIpUdpProtocolTransport _transport;
     private readonly ConcurrentDictionary<uint, DiscoveredDevice> _devices = new();
 
     public DiscoveryService(AdapterInfo adapter, int port = PreflightRules.BacnetPort, int timeoutMs = 3000, int retries = 1)
     {
-        var transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
+        _transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
             localEndpointIp: adapter.Address.ToString());
-        _client = new BacnetClient(transport, timeoutMs, retries);
+        _client = new BacnetClient(_transport, timeoutMs, retries);
         _client.OnIam += OnIam;
     }
 
+    /// <summary>Set after <see cref="RegisterWithBbmdAsync"/>. While registered, Who-Is also goes through the BBMD.</summary>
+    public Bbmd.ForeignDeviceRegistration? BbmdRegistration { get; private set; }
+
     public void Start() => _client.Start();
+
+    /// <summary>Register as a foreign device so broadcasts reach other subnets. Call after <see cref="Start"/>.</summary>
+    public async Task<Bbmd.ForeignDeviceRegistration> RegisterWithBbmdAsync(Bbmd.BbmdTarget target, CancellationToken ct = default)
+    {
+        BbmdRegistration?.Dispose();
+        var registration = new Bbmd.ForeignDeviceRegistration(new Bbmd.LibraryBvlcLink(_transport, _client), target);
+        BbmdRegistration = registration;
+        await registration.RegisterAsync(ct: ct);
+        return registration;
+    }
 
     /// <summary>Object-level reads for one discovered device, sharing this service's connection.</summary>
     public Browsing.DeviceBrowser OpenDevice(DiscoveredDevice device) => new(_client, device);
@@ -38,6 +52,7 @@ public sealed class DiscoveryService : IDisposable
     public async Task<IReadOnlyList<DiscoveredDevice>> WhoIsAsync(int low, int high, TimeSpan wait, CancellationToken ct = default)
     {
         _client.WhoIs(low, high);
+        if (BbmdRegistration is { IsRegistered: true } bbmd) bbmd.RemoteWhoIs(low, high); // BBMD forwards it to its other subnets
         try { await Task.Delay(wait, ct); }
         catch (OperationCanceledException) { }
         return _devices.Values.OrderBy(d => d.InstanceId).ToList();
@@ -97,5 +112,9 @@ public sealed class DiscoveryService : IDisposable
         }
     }
 
-    public void Dispose() => _client.Dispose();
+    public void Dispose()
+    {
+        BbmdRegistration?.Dispose();
+        _client.Dispose();
+    }
 }

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using BACprobe.Core.Bbmd;
 using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Networking;
@@ -104,6 +105,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private DeviceRow? _selectedDevice;
     [ObservableProperty] private ObjectRow? _selectedObject;
     [ObservableProperty] private string _propertiesHeader = "Properties";
+    [ObservableProperty] private string _bbmdText = "";
+    [ObservableProperty] private string _ttlText = BbmdTarget.DefaultTtlSeconds.ToString();
+    [ObservableProperty] private string _bbmdStatus = "";
     [ObservableProperty] private string _lowText = "";
     [ObservableProperty] private string _highText = "";
     [ObservableProperty] private string _status = "Pick the network adapter that is plugged into the building network.";
@@ -160,6 +164,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             }
         }
 
+        BbmdTarget? bbmd = null;
+        if (BbmdText.Trim().Length > 0)
+        {
+            var ttl = int.TryParse(TtlText, out var t) ? t : -1;
+            if (!BbmdTarget.TryParse(BbmdText, ttl, out bbmd, out var bbmdError))
+            {
+                Status = bbmdError;
+                return;
+            }
+        }
+
         if (!await ResolveOverridesAsync()) return;
 
         IsScanning = true;
@@ -174,6 +189,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             svc.Start();
             _svc = svc;
             _writer = svc.CreateWriter(_log, _overrides);
+            BbmdStatus = "";
+            if (bbmd is not null)
+            {
+                Status = $"Registering with BBMD {bbmd}...";
+                var registration = await svc.RegisterWithBbmdAsync(bbmd);
+                BbmdStatus = registration.Message;
+                registration.Changed += () => OnUi(() => BbmdStatus = registration.Message); // e.g. a renewal that failed later
+                Status = "Sending Who-Is...";
+            }
             var found = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(5));
             if (found.Count == 0)
             {
