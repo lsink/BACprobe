@@ -43,6 +43,9 @@ public sealed class DeviceRow(DiscoveredDevice d)
     public string Name => d.ObjectName ?? "-";
 }
 
+/// <summary>One entry in the On/Off dropdown: what the tech sees, and the text the write parser understands.</summary>
+public sealed record BinaryChoice(string Label, string Text);
+
 public sealed class ObjectRow(ObjectSummary s) : ObservableObject
 {
     private ObjectSummary _s = s;
@@ -129,6 +132,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private PriorityChoice _selectedPriority = PriorityChoice.Default;
     [ObservableProperty] private string _writeValueText = "";
+
+    // On/off points get a dropdown instead of a text box, so nobody has to remember what to type.
+    public IReadOnlyList<BinaryChoice> BinaryChoices { get; } = [new("On (Active)", "on"), new("Off (Inactive)", "off")];
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNotBinarySelected))]
+    private bool _isBinarySelected;
+
+    public bool IsNotBinarySelected => !IsBinarySelected;
+    [ObservableProperty] private BinaryChoice? _selectedBinaryChoice;
+
+    partial void OnSelectedBinaryChoiceChanged(BinaryChoice? value)
+    {
+        if (value is not null) WriteValueText = value.Text;
+    }
     [ObservableProperty] private string _overrideSummary = "No overrides in place.";
 
     [ObservableProperty]
@@ -346,7 +363,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Status = $"{saved.Objects.Count} saved objects in {saved.Name}. These are the values from when the job was saved; Scan to read live.";
     }
 
-    partial void OnSelectedObjectChanged(ObjectRow? value) => _ = LoadPropertiesAsync(value);
+    partial void OnSelectedObjectChanged(ObjectRow? value)
+    {
+        // A value typed for one point must never carry over to the next.
+        WriteValueText = "";
+        SelectedBinaryChoice = null;
+        IsBinarySelected = value?.Summary.Id.type is BacnetObjectTypes.OBJECT_BINARY_OUTPUT or BacnetObjectTypes.OBJECT_BINARY_VALUE;
+        if (IsBinarySelected && value is not null)
+        {
+            // Most overrides flip the point, so start on the opposite of what it is now. The confirmation still shows the new value.
+            var isOn = string.Equals(value.Summary.PresentValue, "Active", StringComparison.OrdinalIgnoreCase);
+            SelectedBinaryChoice = BinaryChoices[isOn ? 1 : 0];
+        }
+        _ = LoadPropertiesAsync(value);
+    }
 
     private async Task LoadPropertiesAsync(ObjectRow? row)
     {
@@ -633,7 +663,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         var deviceName = deviceRow.Name == "-" ? $"device {deviceRow.Instance}" : deviceRow.Name;
         var request = new WriteRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label, value,
-            release ? "release" : WriteValueText.Trim(), SelectedPriority.Number, obj.ValueText);
+            release ? "release" : IsBinarySelected && SelectedBinaryChoice is { } choice ? choice.Label : WriteValueText.Trim(),
+            SelectedPriority.Number, obj.ValueText);
 
         if (!ConfirmWrite(request))
         {

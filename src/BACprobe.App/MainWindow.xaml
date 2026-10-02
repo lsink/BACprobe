@@ -214,9 +214,16 @@
               <TextBlock Text="Override this point" FontWeight="SemiBold" />
               <DockPanel Margin="0,6,0,0">
                 <TextBlock Text="Value" Width="60" VerticalAlignment="Center" />
-                <TextBox Text="{Binding WriteValueText, UpdateSourceTrigger=PropertyChanged}"
-                         AutomationProperties.Name="Value to write"
-                         ToolTip="Number for analog points; on/off for binary points; 1, 2, 3... for multi-state." />
+                <Grid>
+                  <!-- On/off points: a dropdown. Everything else: type a number. -->
+                  <ComboBox ItemsSource="{Binding BinaryChoices}" SelectedItem="{Binding SelectedBinaryChoice}"
+                            DisplayMemberPath="Label" AutomationProperties.Name="On or off"
+                            Visibility="{Binding IsBinarySelected, Converter={StaticResource BoolToVis}}" />
+                  <TextBox Text="{Binding WriteValueText, UpdateSourceTrigger=PropertyChanged}"
+                           AutomationProperties.Name="Value to write"
+                           Visibility="{Binding IsNotBinarySelected, Converter={StaticResource BoolToVis}}"
+                           ToolTip="A number for analog points; 1, 2, 3... for multi-state." />
+                </Grid>
               </DockPanel>
               <DockPanel Margin="0,6,0,0">
                 <TextBlock Text="Priority" Width="60" VerticalAlignment="Center" />
