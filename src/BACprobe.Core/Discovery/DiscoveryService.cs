@@ -19,6 +19,9 @@ public sealed class DiscoveryService : IDisposable
 
     public void Start() => _client.Start();
 
+    /// <summary>Object-level reads for one discovered device, sharing this service's connection.</summary>
+    public Browsing.DeviceBrowser OpenDevice(DiscoveredDevice device) => new(_client, device);
+
     private void OnIam(BacnetClient sender, BacnetAddress adr, uint deviceId, uint maxApdu,
         BacnetSegmentations segmentation, ushort vendorId)
     {

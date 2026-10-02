@@ -5,7 +5,7 @@ using BACprobe.Core.Simulation;
 
 namespace BACprobe.Cli;
 
-internal static class Program
+internal static partial class Program
 {
     private const string Usage = """
         bacprobe - BACnet/IP test harness
@@ -15,10 +15,14 @@ internal static class Program
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details]
           bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm]
+          bacprobe objects   --device <instance> [--adapter <ip>]
+          bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
 
         --adapter  IPv4 address of the NIC to use (default: the only usable adapter, else you must choose).
         --low/--high  Limit Who-Is to a device instance range.
         --wait     Seconds to listen for I-Am replies (default 5).
+        objects    List a device's objects with name, value and units. read: all properties of one object, e.g. --object ai:1
+                   (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
         simulate   Run fake BACnet devices on this PC (Ctrl+C to stop) so you can test without hardware.
                    --devices n (default 2), --first instance (default 1001),
                    --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
@@ -41,6 +45,8 @@ internal static class Program
                 "preflight" => Preflight(opts),
                 "discover" => await DiscoverAsync(opts),
                 "simulate" => await SimulateAsync(opts),
+                "objects" => await ObjectsAsync(opts),
+                "read" => await ReadAsync(opts),
                 _ => Fail($"Unknown command '{args[0]}'.\n\n{Usage}"),
             };
         }
