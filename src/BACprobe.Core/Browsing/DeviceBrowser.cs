@@ -13,6 +13,23 @@ public sealed class ObjectSummary
     public string? Units { get; set; }
     /// <summary>The raw BACnet engineering-units code (used by EDE export).</summary>
     public uint? UnitsCode { get; set; }
+    /// <summary>Occupied priority-array slots (empty for points without a priority array).</summary>
+    public IReadOnlyList<PrioritySlot> PrioritySlots { get; set; } = [];
+    /// <summary>True when a slot at manual-operator priority (8) or higher is occupied: someone has overridden this point.</summary>
+    public bool IsOverridden => PriorityArrayInfo.IsOverride(PrioritySlots);
+    /// <summary>Short text for the Override column, e.g. "P8 Manual Operator"; empty when not overridden.</summary>
+    public string OverrideText
+    {
+        get
+        {
+            if (!IsOverridden) return "";
+            var p = PrioritySlots.Min(s => s.Priority);
+            return $"P{p} {BacnetNames.PriorityName(p)}";
+        }
+    }
+    /// <summary>All occupied slots, for a tooltip.</summary>
+    public string OverrideTooltip =>
+        PrioritySlots.Count == 0 ? "" : "Priority array: " + string.Join("; ", PrioritySlots.Select(s => s.Description));
     public string TypeName => BacnetNames.ObjectTypeName(Id.type);
     public string Label => BacnetNames.ObjectLabel(Id);
     /// <summary>Present value with units, e.g. "72.4 °F".</summary>
@@ -31,6 +48,10 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         BacnetPropertyIds.PROP_OBJECT_NAME, BacnetPropertyIds.PROP_DESCRIPTION,
         BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_UNITS,
     ];
+
+    /// <summary>The four basics for every object, plus the priority array for points that can be commanded.</summary>
+    private static BacnetPropertyIds[] SummaryPropsFor(BacnetObjectTypes type) =>
+        PriorityArrayInfo.MayHavePriorityArray(type) ? [.. SummaryProps, BacnetPropertyIds.PROP_PRIORITY_ARRAY] : SummaryProps;
 
     // Used when a device will not do ReadPropertyMultiple with PROP_ALL.
     private static readonly BacnetPropertyIds[] CommonProps =
@@ -87,7 +108,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             try
             {
                 var specs = batch.Select(id => new BacnetReadAccessSpecification(id,
-                    SummaryProps.Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList())).ToList();
+                    SummaryPropsFor(id.type).Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList())).ToList();
                 var results = await client.ReadPropertyMultipleAsync(device.Address, specs, cancellationToken: ct);
                 foreach (var r in results)
                     foreach (var pv in r.values)
@@ -96,7 +117,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             catch (Exception) when (!ct.IsCancellationRequested)
             {
                 foreach (var id in batch) // device refused RPM: one property at a time
-                    foreach (var p in SummaryProps)
+                    foreach (var p in SummaryPropsFor(id.type))
                     {
                         try { ApplySummary(byId[id], p, await client.ReadPropertyAsync(device.Address, id, p, cancellationToken: ct)); }
                         catch (Exception) when (!ct.IsCancellationRequested) { /* property not present on this object type */ }
@@ -117,6 +138,9 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             case BacnetPropertyIds.PROP_OBJECT_NAME: s.Name = text; break;
             case BacnetPropertyIds.PROP_DESCRIPTION: s.Description = text; break;
             case BacnetPropertyIds.PROP_PRESENT_VALUE: s.PresentValue = text; break;
+            case BacnetPropertyIds.PROP_PRIORITY_ARRAY:
+                s.PrioritySlots = PriorityArrayInfo.Occupied(s.Id.type, values);
+                break;
             case BacnetPropertyIds.PROP_UNITS:
                 s.Units = text;
                 if (values[0].Value is IConvertible code) s.UnitsCode = Convert.ToUInt32(code, System.Globalization.CultureInfo.InvariantCulture);

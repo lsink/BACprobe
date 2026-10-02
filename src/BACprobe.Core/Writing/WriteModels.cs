@@ -81,6 +81,9 @@ public static class WriteValueParser
     }
 }
 
+/// <summary>One labelled line in the confirmation dialog, e.g. "Priority" / "8 - Manual Operator".</summary>
+public sealed record ConfirmFact(string Label, string Value);
+
 /// <summary>One thing the user is about to do to one point. A null <see cref="Value"/> means release (relinquish).</summary>
 public sealed record WriteRequest(
     DiscoveredDevice Device,
@@ -95,6 +98,35 @@ public sealed record WriteRequest(
     public bool IsRelease => Value is null;
     public string ObjectLabel => $"{ObjectName} ({BacnetNames.ObjectLabel(Point)})";
     public string PriorityLabel => $"priority {Priority} ({BacnetNames.PriorityName(Priority)})";
+
+    /// <summary>The question, in one line: "Write 25 to Damper Position?"</summary>
+    public string Headline => IsRelease ? $"Release your override of {ObjectName}?" : $"Write {ValueText} to {ObjectName}?";
+
+    /// <summary>The details a tech should check before saying yes. The priority is always listed, in plain English.</summary>
+    public IReadOnlyList<ConfirmFact> Facts
+    {
+        get
+        {
+            var facts = new List<ConfirmFact>
+            {
+                new("Device", $"{DeviceName} (device {Device.InstanceId})"),
+                new("Point", ObjectLabel),
+            };
+            if (CurrentValueText is { Length: > 0 }) facts.Add(new("Now", CurrentValueText));
+            if (!IsRelease) facts.Add(new("New value", ValueText));
+            facts.Add(new("Priority", $"{Priority} - {BacnetNames.PriorityName(Priority)}"));
+            return facts;
+        }
+    }
+
+    public string Consequence => IsRelease
+        ? "The point goes back to whatever the next-highest priority (or the controller's own program) says."
+        : "This overrides the controller's automatic control of this point until you release it.";
+
+    /// <summary>Extra warning for life-safety and critical-equipment priorities; null otherwise.</summary>
+    public string? Warning => !IsRelease && Priority <= 5
+        ? "This priority is reserved for life-safety or critical equipment. Only continue if you are sure."
+        : null;
 
     /// <summary>Plain-English text for the confirmation dialog. Always names the priority.</summary>
     public string ConfirmationText()

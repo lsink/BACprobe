@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.IO.BACnet;
+using System.Text.Json;
+using BACprobe.Core.Browsing;
 using BACprobe.Core.Writing;
 using Microsoft.Data.Sqlite;
 
@@ -11,7 +13,7 @@ namespace BACprobe.Core.Jobs;
 /// </summary>
 public static class JobFile
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2; // 2 added objects.priority_slots; version 1 files still load
     public const string Extension = ".bacprobe";
     private const string AppMarker = "BACprobe";
 
@@ -25,7 +27,7 @@ public static class JobFile
         CREATE TABLE objects (
             device_instance INTEGER NOT NULL REFERENCES devices(instance) ON DELETE CASCADE,
             object_type INTEGER NOT NULL, object_instance INTEGER NOT NULL,
-            name TEXT, description TEXT, present_value TEXT, units TEXT, units_code INTEGER,
+            name TEXT, description TEXT, present_value TEXT, units TEXT, units_code INTEGER, priority_slots TEXT,
             PRIMARY KEY (device_instance, object_type, object_instance));
         CREATE TABLE write_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, device_instance INTEGER NOT NULL,
@@ -97,7 +99,7 @@ public static class JobFile
                 meta.GetValueOrDefault("name", ""), meta.GetValueOrDefault("notes", ""),
                 ParseTime(meta.GetValueOrDefault("created")), ParseTime(meta.GetValueOrDefault("saved")),
                 meta.GetValueOrDefault("bbmd"), meta.GetValueOrDefault("adapter"), meta.GetValueOrDefault("app_version", ""));
-            return new JobSnapshot(info, ReadDevices(conn), ReadLog(conn));
+            return new JobSnapshot(info, ReadDevices(conn, version), ReadLog(conn));
         }
         catch (SqliteException ex)
         {
@@ -140,11 +142,11 @@ public static class JobFile
 
         foreach (var o in d.Objects)
             Exec(c, tx, """
-                INSERT INTO objects(device_instance, object_type, object_instance, name, description, present_value, units, units_code)
-                VALUES ($d, $t, $i, $n, $de, $pv, $u, $uc)
+                INSERT INTO objects(device_instance, object_type, object_instance, name, description, present_value, units, units_code, priority_slots)
+                VALUES ($d, $t, $i, $n, $de, $pv, $u, $uc, $ps)
                 """,
                 ("$d", (long)d.Instance), ("$t", (int)o.Type), ("$i", (long)o.Instance), ("$n", o.Name),
-                ("$de", o.Description), ("$pv", o.PresentValue), ("$u", o.Units), ("$uc", o.UnitsCode is { } uc ? (long)uc : null));
+                ("$de", o.Description), ("$pv", o.PresentValue), ("$u", o.Units), ("$uc", o.UnitsCode is { } uc ? (long)uc : null), ("$ps", SlotsToJson(o.Slots)));
     }
 
     private static void WriteLogRow(SqliteConnection c, SqliteTransaction tx, WriteLogEntry e) =>
@@ -165,13 +167,15 @@ public static class JobFile
         return meta;
     }
 
-    private static List<SavedDevice> ReadDevices(SqliteConnection c)
+    private static List<SavedDevice> ReadDevices(SqliteConnection c, int version)
     {
         var objects = new Dictionary<long, List<SavedObject>>();
         using (var cmd = c.CreateCommand())
         {
-            cmd.CommandText = """
-                SELECT device_instance, object_type, object_instance, name, description, present_value, units, units_code
+            // Version 1 files have no priority_slots column.
+            var slotsColumn = version >= 2 ? "priority_slots" : "NULL";
+            cmd.CommandText = $"""
+                SELECT device_instance, object_type, object_instance, name, description, present_value, units, units_code, {slotsColumn}
                 FROM objects ORDER BY device_instance, object_type, object_instance
                 """;
             using var r = cmd.ExecuteReader();
@@ -180,7 +184,7 @@ public static class JobFile
                 var dev = r.GetInt64(0);
                 if (!objects.TryGetValue(dev, out var list)) objects[dev] = list = [];
                 list.Add(new SavedObject((BacnetObjectTypes)r.GetInt32(1), (uint)r.GetInt64(2), Str(r, 3), Str(r, 4), Str(r, 5),
-                    Str(r, 6), r.IsDBNull(7) ? null : (uint)r.GetInt64(7)));
+                    Str(r, 6), r.IsDBNull(7) ? null : (uint)r.GetInt64(7), SlotsFromJson(Str(r, 8))));
             }
         }
 
@@ -215,6 +219,24 @@ public static class JobFile
             list.Add(new WriteLogEntry(ParseTime(r.GetString(0)), (uint)r.GetInt64(1), Str(r, 2) ?? "", Str(r, 3) ?? "",
                 Str(r, 4) ?? "", r.GetInt32(5), r.GetInt32(6) != 0, Str(r, 7) ?? ""));
         return list;
+    }
+
+    private sealed record SlotDto(int P, string V);
+
+    private static string? SlotsToJson(IReadOnlyList<PrioritySlot>? slots) =>
+        slots is null or { Count: 0 } ? null : JsonSerializer.Serialize(slots.Select(s => new SlotDto(s.Priority, s.ValueText)));
+
+    /// <summary>The file may come from anywhere: bad JSON means "no slots", never a crash.</summary>
+    private static List<PrioritySlot> SlotsFromJson(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<SlotDto>>(json)?
+                .Where(d => d is { P: >= 1 and <= 16, V: not null })
+                .Select(d => new PrioritySlot(d.P, d.V)).ToList() ?? [];
+        }
+        catch (JsonException) { return []; }
     }
 
     private static string? Str(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);

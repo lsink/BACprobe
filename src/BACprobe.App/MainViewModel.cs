@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using BACprobe.Core.Bbmd;
 using BACprobe.Core.Browsing;
@@ -50,6 +52,9 @@ public sealed class ObjectRow(ObjectSummary s) : ObservableObject
     public string Name => _s.Name ?? "-";
     public string Value => _s.ValueText;
     public string Description => _s.Description ?? "";
+    public bool IsOverridden => _s.IsOverridden;
+    public string Override => _s.OverrideText;
+    public string OverrideTooltip => _s.OverrideTooltip;
 
     /// <summary>Swap in freshly read values (e.g. after a write) without losing the grid selection.</summary>
     public void Refresh(ObjectSummary fresh)
@@ -75,6 +80,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Set by the window: shows a yes/no box, returns true for yes.</summary>
     public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
+
+    /// <summary>Set by the window: the write/release confirmation dialog; true if the user confirmed.</summary>
+    public Func<WriteRequest, bool> ConfirmWrite { get; set; } = _ => false;
 
     /// <summary>Set by the window: shows a Save dialog (suggested file name in); null if the user cancels.</summary>
     public Func<string, (string Path, ExportFormat Format)?> PickExportFile { get; set; } = _ => null;
@@ -127,6 +135,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private DeviceRow? _selectedDevice;
     [ObservableProperty] private ObjectRow? _selectedObject;
     [ObservableProperty] private string _propertiesHeader = "Properties";
+    // Result of the last export or job save: a visible confirmation with quick access to the file.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(OpenResultFileCommand), nameof(ShowResultInFolderCommand))]
+    private string _resultPath = "";
+
+    [ObservableProperty] private string _resultMessage = "";
+
+    [ObservableProperty] private string _preflightSummary = "";
+    [ObservableProperty] private bool _preflightExpanded = true;
     [ObservableProperty] private string _jobName = "";
     [ObservableProperty] private string _jobNotes = "";
     [ObservableProperty] private string _offlineBanner = "";
@@ -171,6 +188,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var results = Core.Networking.Preflight.Run(SelectedAdapter.Info);
         foreach (var r in results) Preflight.Add(new PreflightRow(r));
         PreflightPassed = PreflightRules.CanProceed(results);
+
+        // Collapse the list when everything is fine; open it when the tech needs to read something.
+        var failures = results.Count(r => r.Severity == PreflightSeverity.Fail);
+        var warnings = results.Count(r => r.Severity == PreflightSeverity.Warning);
+        var warned = string.Join(", ", results.Where(r => r.Severity == PreflightSeverity.Warning).Select(r => r.Check));
+        PreflightSummary = failures > 0
+            ? $"✖ {failures} problem(s) to fix before you can scan - details below"
+            : warnings > 0 ? $"⚠ Ready, with {warnings} warning(s): {warned} - click to read" : "✔ All pre-flight checks passed";
+        PreflightExpanded = failures > 0; // a warning does not block scanning, so it stays one line until the tech opens it
         Status = PreflightPassed ? "Ready. Click Scan to find devices." : "Fix the red items above, then click Re-check.";
     }
 
@@ -450,6 +476,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Status = $"Saved job \"{name}\": {saved.Count} device(s), {saved.Sum(d => d.Objects.Count)} object(s) to {path}.";
             if (failed.Count > 0)
                 Status += $" Points NOT saved for: {string.Join(", ", failed.Select(f => $"{f.Row.Instance} ({f.Reason})"))}.";
+            ShowResult(Status, path);
         }
         catch (JobFileException ex)
         {
@@ -523,10 +550,53 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var points = devices.Sum(d => d.Points.Count());
             Status = $"Exported {points} point(s) from {devices.Count} device(s) to {choice.Path}.";
             if (failed.Count > 0) Status += $" NOT included: {string.Join("; ", failed)}.";
+            ShowResult(Status, choice.Path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Status = $"Could not save the file: {ex.Message} Likely cause: it is open in Excel, or the folder is read-only. Next step: close the file or choose another location.";
+        }
+    }
+
+    private void ShowResult(string message, string path)
+    {
+        ResultMessage = message;
+        ResultPath = path;
+    }
+
+    [RelayCommand]
+    private void DismissResult()
+    {
+        ResultMessage = "";
+        ResultPath = "";
+    }
+
+    private bool HasResultFile() => ResultPath.Length > 0 && File.Exists(ResultPath);
+
+    [RelayCommand(CanExecute = nameof(HasResultFile))]
+    private void OpenResultFile()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(ResultPath) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or FileNotFoundException)
+        {
+            Status = $"Could not open the file: {ex.Message} Likely cause: no program is set to open this file type. " +
+                     "Next step: use Show in folder and open it from there.";
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(HasResultFile))]
+    private void ShowResultInFolder()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{ResultPath}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            Status = $"Could not open the folder: {ex.Message} The file is at {ResultPath}.";
         }
     }
 
@@ -538,6 +608,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand(CanExecute = nameof(CanWriteSelected))]
     private Task ReleaseSelectedAsync() => DoWriteAsync(release: true);
+
 
     private async Task DoWriteAsync(bool release)
     {
@@ -561,7 +632,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var request = new WriteRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label, value,
             release ? "release" : WriteValueText.Trim(), SelectedPriority.Number, obj.ValueText);
 
-        if (!Confirm(release ? "Release override" : "Confirm write", request.ConfirmationText()))
+        if (!ConfirmWrite(request))
         {
             Status = "Cancelled. Nothing was written.";
             return;

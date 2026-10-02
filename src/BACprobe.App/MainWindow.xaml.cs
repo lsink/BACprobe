@@ -16,6 +16,21 @@ public partial class MainWindow : Window
         {
             vm.Confirm = (title, text) =>
                 MessageBox.Show(this, text, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+            vm.ConfirmWrite = request =>
+            {
+                try
+                {
+                    var dialog = new ConfirmWriteWindow(request) { Owner = this };
+                    return dialog.ShowDialog() == true;
+                }
+                catch (Exception ex)
+                {
+                    // Never let a broken dialog look like "nothing happened", and never write without a confirmation.
+                    MessageBox.Show(this, $"BACprobe could not show the confirmation, so nothing was written.\n\n{ex.Message}",
+                        "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return false;
+                }
+            };
             vm.PickExportFile = suggested =>
             {
                 var dialog = new SaveFileDialog

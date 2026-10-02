@@ -75,6 +75,89 @@ public sealed class JobFileTests : IDisposable
     }
 
     [Fact]
+    public void Priority_slots_survive_a_round_trip_and_still_flag_the_override()
+    {
+        var slots = new[] { new BACprobe.Core.Browsing.PrioritySlot(8, "25"), new BACprobe.Core.Browsing.PrioritySlot(16, "50") };
+        var path = P("slots.bacprobe");
+        JobFile.Save(path, Job([Device(1, "A",
+            Obj(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, 1, "Damper") with { Slots = slots },
+            Obj(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1, "Temp"))]));
+
+        var back = JobFile.Load(path).Devices[0];
+        var damper = back.Objects.Single(o => o.Type == BacnetObjectTypes.OBJECT_ANALOG_OUTPUT);
+        var temp = back.Objects.Single(o => o.Type == BacnetObjectTypes.OBJECT_ANALOG_INPUT);
+        Assert.Equal([8, 16], damper.Slots!.Select(s => s.Priority));
+        Assert.Equal("25", damper.Slots![0].ValueText);
+        var summary = damper.ToSummary();
+        Assert.True(summary.IsOverridden);
+        Assert.Equal("P8 Manual Operator", summary.OverrideText);
+        Assert.Empty(temp.Slots ?? []);
+    }
+
+    [Fact]
+    public void Version_1_job_files_still_open()
+    {
+        // A file exactly as the first release wrote it: schema without priority_slots, user_version 1.
+        var path = P("v1.bacprobe");
+        using (var c = new SqliteConnection($"Data Source={path};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE devices (
+                    instance INTEGER PRIMARY KEY, name TEXT NOT NULL, address_text TEXT NOT NULL,
+                    address_type INTEGER NOT NULL, network INTEGER NOT NULL, address_bytes BLOB NOT NULL,
+                    vendor_id INTEGER NOT NULL, vendor_name TEXT, model_name TEXT, firmware TEXT,
+                    max_apdu INTEGER NOT NULL, segmentation INTEGER NOT NULL, points_read INTEGER NOT NULL);
+                CREATE TABLE objects (
+                    device_instance INTEGER NOT NULL, object_type INTEGER NOT NULL, object_instance INTEGER NOT NULL,
+                    name TEXT, description TEXT, present_value TEXT, units TEXT, units_code INTEGER,
+                    PRIMARY KEY (device_instance, object_type, object_instance));
+                CREATE TABLE write_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, device_instance INTEGER NOT NULL,
+                    device_name TEXT, point TEXT, action TEXT, priority INTEGER, success INTEGER NOT NULL, result TEXT);
+                INSERT INTO meta VALUES ('app', 'BACprobe'), ('name', 'Old job');
+                INSERT INTO devices VALUES (1001, 'AHU-1', '192.168.1.5:47808', 1, 0, x'C0A80105BAC0', 999, 'Acme', 'M1', '1.0', 480, 3, 1);
+                INSERT INTO objects VALUES (1001, 1, 1, 'Damper', 'desc', '50', '%', 98);
+                PRAGMA user_version = 1;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var job = JobFile.Load(path);
+        Assert.Equal("Old job", job.Info.Name);
+        var obj = Assert.Single(job.Devices[0].Objects);
+        Assert.Equal("Damper", obj.Name);
+        Assert.Empty(obj.Slots ?? []);
+    }
+
+    [Fact]
+    public void Damaged_slot_data_means_no_slots_not_a_crash()
+    {
+        var path = P("badjson.bacprobe");
+        JobFile.Save(path, Job([Device(1, "A", Obj(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, 1, "Damper"))]));
+        using (var c = new SqliteConnection($"Data Source={path};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "UPDATE objects SET priority_slots = '{not json at all'";
+            cmd.ExecuteNonQuery();
+        }
+        Assert.Empty(JobFile.Load(path).Devices[0].Objects[0].Slots ?? []);
+
+        using (var c = new SqliteConnection($"Data Source={path};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "UPDATE objects SET priority_slots = '[{\"P\":99,\"V\":\"x\"},{\"P\":8,\"V\":\"ok\"}]'"; // 99 is not a priority
+            cmd.ExecuteNonQuery();
+        }
+        var slots = JobFile.Load(path).Devices[0].Objects[0].Slots!;
+        Assert.Equal([8], slots.Select(s => s.Priority));
+    }
+
+    [Fact]
     public void Saved_address_rebuilds_into_a_usable_device()
     {
         var path = P("addr.bacprobe");
