@@ -3,6 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:BACprobe.App"
         Title="BACprobe" Height="800" Width="1200">
+  <Window.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolToVis" />
+  </Window.Resources>
   <Window.DataContext>
     <app:MainViewModel />
   </Window.DataContext>
@@ -12,6 +15,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
@@ -106,6 +110,26 @@
           <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" />
           <DockPanel Grid.Column="2">
             <TextBlock DockPanel.Dock="Top" Text="{Binding PropertiesHeader}" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0"
+                        Visibility="{Binding CanWriteSelected, Converter={StaticResource BoolToVis}}">
+              <TextBlock Text="Override this point" FontWeight="SemiBold" />
+              <DockPanel Margin="0,6,0,0">
+                <TextBlock Text="Value" Width="60" VerticalAlignment="Center" />
+                <TextBox Text="{Binding WriteValueText, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Number for analog points; on/off for binary points; 1, 2, 3... for multi-state." />
+              </DockPanel>
+              <DockPanel Margin="0,6,0,0">
+                <TextBlock Text="Priority" Width="60" VerticalAlignment="Center" />
+                <ComboBox ItemsSource="{Binding PriorityChoices}" SelectedItem="{Binding SelectedPriority}"
+                          DisplayMemberPath="Label" />
+              </DockPanel>
+              <TextBlock Text="{Binding SelectedPriority.Hint}" TextWrapping="Wrap" Opacity="0.75" Margin="60,4,0,0" />
+              <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="Write..." Padding="16,4" Command="{Binding WriteSelectedCommand}" />
+                <Button Content="Release my override" Padding="16,4" Margin="8,0,0,0"
+                        Command="{Binding ReleaseSelectedCommand}" />
+              </StackPanel>
+            </StackPanel>
             <DataGrid ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
                       HeadersVisibility="Column" GridLinesVisibility="Horizontal">
               <DataGrid.Columns>
@@ -118,6 +142,12 @@
       </Grid>
     </DockPanel>
 
-    <TextBlock Grid.Row="4" Text="{Binding Status}" TextWrapping="Wrap" Margin="0,12,0,0" />
+    <DockPanel Grid.Row="4" Margin="0,12,0,0">
+      <TextBlock DockPanel.Dock="Right" Text="{Binding OverrideSummary}" Margin="16,0,0,0" FontWeight="SemiBold" />
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+    </DockPanel>
+    <Expander Grid.Row="5" Header="Write log (also saved to %LOCALAPPDATA%\BACprobe\write-log.txt)" Margin="0,8,0,0">
+      <ListBox ItemsSource="{Binding WriteLogLines}" Height="90" FontFamily="Consolas" />
+    </Expander>
   </Grid>
 </Window>

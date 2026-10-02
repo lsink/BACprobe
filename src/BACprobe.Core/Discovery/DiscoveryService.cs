@@ -22,6 +22,9 @@ public sealed class DiscoveryService : IDisposable
     /// <summary>Object-level reads for one discovered device, sharing this service's connection.</summary>
     public Browsing.DeviceBrowser OpenDevice(DiscoveredDevice device) => new(_client, device);
 
+    /// <summary>Writes through this service's connection; every attempt is logged and overrides are tracked.</summary>
+    public Writing.DeviceWriter CreateWriter(Writing.WriteLog log, Writing.OverrideTracker tracker) => new(_client, log, tracker);
+
     private void OnIam(BacnetClient sender, BacnetAddress adr, uint deviceId, uint maxApdu,
         BacnetSegmentations segmentation, ushort vendorId)
     {

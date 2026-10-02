@@ -2,6 +2,9 @@ using System.Collections.ObjectModel;
 using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Networking;
+using BACprobe.Core.Writing;
+using System.IO.BACnet;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -34,20 +37,43 @@ public sealed class DeviceRow(DiscoveredDevice d)
     public string Name => d.ObjectName ?? "-";
 }
 
-public sealed class ObjectRow(ObjectSummary s)
+public sealed class ObjectRow(ObjectSummary s) : ObservableObject
 {
-    public ObjectSummary Summary => s;
-    public string Id => $"{BacnetNames.ObjectTypeShort(s.Id.type)} {s.Id.instance}";
-    public string Type => s.TypeName;
-    public string Name => s.Name ?? "-";
-    public string Value => s.ValueText;
-    public string Description => s.Description ?? "";
+    private ObjectSummary _s = s;
+    public ObjectSummary Summary => _s;
+    public string Id => $"{BacnetNames.ObjectTypeShort(_s.Id.type)} {_s.Id.instance}";
+    public string Type => _s.TypeName;
+    public string Name => _s.Name ?? "-";
+    public string Value => _s.ValueText;
+    public string Description => _s.Description ?? "";
+
+    /// <summary>Swap in freshly read values (e.g. after a write) without losing the grid selection.</summary>
+    public void Refresh(ObjectSummary fresh)
+    {
+        _s = fresh;
+        OnPropertyChanged(string.Empty);
+    }
 }
 
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private DiscoveryService? _svc;
     private CancellationTokenSource? _browseCts;
+    private readonly WriteLog _log = new(WriteLog.DefaultPath);
+    private readonly OverrideTracker _overrides = new();
+    private DeviceWriter? _writer;
+
+    /// <summary>Set by the window: shows a yes/no box, returns true for yes.</summary>
+    public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
+
+    /// <summary>Set by the window: shows a yes/no/cancel box.</summary>
+    public Func<string, string, MessageBoxResult> AskYesNoCancel { get; set; } = (_, _) => MessageBoxResult.Cancel;
+
+    public IReadOnlyList<PriorityChoice> PriorityChoices { get; } = PriorityChoice.All;
+
+    /// <summary>True when this session has left overrides on a device that we can still talk to.</summary>
+    public bool HasOverrides => _writer is not null && _overrides.Active.Count > 0;
+    public ObservableCollection<string> WriteLogLines { get; } = [];
 
     public ObservableCollection<AdapterChoice> Adapters { get; } = [];
     public ObservableCollection<PreflightRow> Preflight { get; } = [];
@@ -67,6 +93,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
     private bool _isScanning;
 
+    [ObservableProperty] private PriorityChoice _selectedPriority = PriorityChoice.Default;
+    [ObservableProperty] private string _writeValueText = "";
+    [ObservableProperty] private string _overrideSummary = "No overrides in place.";
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
+    private bool _canWriteSelected;
+
     [ObservableProperty] private DeviceRow? _selectedDevice;
     [ObservableProperty] private ObjectRow? _selectedObject;
     [ObservableProperty] private string _propertiesHeader = "Properties";
@@ -74,7 +108,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _highText = "";
     [ObservableProperty] private string _status = "Pick the network adapter that is plugged into the building network.";
 
-    public MainViewModel() => RefreshAdapters();
+    public MainViewModel()
+    {
+        _log.Added += e => OnUi(() => WriteLogLines.Add(e.Text));
+        RefreshAdapters();
+    }
+
+    private static void OnUi(Action a)
+    {
+        var d = Application.Current?.Dispatcher;
+        if (d is null || d.CheckAccess()) a(); else d.Invoke(a);
+    }
 
     [RelayCommand]
     private void RefreshAdapters()
@@ -116,6 +160,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             }
         }
 
+        if (!await ResolveOverridesAsync()) return;
+
         IsScanning = true;
         ResetBrowsing();
         Status = "Sending Who-Is...";
@@ -123,9 +169,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             _svc?.Dispose();
             _svc = null;
+            _writer = null;
             var svc = new DiscoveryService(SelectedAdapter!.Info);
             svc.Start();
             _svc = svc;
+            _writer = svc.CreateWriter(_log, _overrides);
             var found = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(5));
             if (found.Count == 0)
             {
@@ -196,6 +244,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async Task LoadPropertiesAsync(ObjectRow? row)
     {
         Properties.Clear();
+        CanWriteSelected = false;
         if (row is null || SelectedDevice is null || _svc is null)
         {
             PropertiesHeader = "Properties";
@@ -209,6 +258,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var rows = await _svc.OpenDevice(SelectedDevice.Device).ReadAllPropertiesAsync(row.Summary.Id, _browseCts?.Token ?? default);
             if (!ReferenceEquals(SelectedObject, row)) return; // selection moved on while reading
             foreach (var r in rows) Properties.Add(r);
+            CanWriteSelected = rows.Any(r => r.PropertyId == (uint)BacnetPropertyIds.PROP_PRIORITY_ARRAY);
             if (rows.Count == 0)
                 Status = $"The device returned no properties for {label}. Likely cause: the object was removed. Next step: select the device again.";
         }
@@ -216,6 +266,87 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             Status = $"Could not read {label}: {ex.Message}. Likely cause: the device refused the request or stopped answering. Next step: try again.";
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanWriteSelected))]
+    private Task WriteSelectedAsync() => DoWriteAsync(release: false);
+
+    [RelayCommand(CanExecute = nameof(CanWriteSelected))]
+    private Task ReleaseSelectedAsync() => DoWriteAsync(release: true);
+
+    private async Task DoWriteAsync(bool release)
+    {
+        var row = SelectedObject;
+        var deviceRow = SelectedDevice;
+        if (_writer is null || _svc is null || row is null || deviceRow is null) return;
+
+        var obj = row.Summary;
+        BacnetValue? value = null;
+        if (!release)
+        {
+            if (!WriteValueParser.TryParse(obj.Id.type, WriteValueText, out var parsed, out var error))
+            {
+                Status = error;
+                return;
+            }
+            value = parsed;
+        }
+
+        var deviceName = deviceRow.Name == "-" ? $"device {deviceRow.Instance}" : deviceRow.Name;
+        var request = new WriteRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label, value,
+            release ? "release" : WriteValueText.Trim(), SelectedPriority.Number, obj.ValueText);
+
+        if (!Confirm(release ? "Release override" : "Confirm write", request.ConfirmationText()))
+        {
+            Status = "Cancelled. Nothing was written.";
+            return;
+        }
+
+        var outcome = await _writer.ExecuteAsync(request);
+        Status = outcome.Success
+            ? (release ? "Released." : "Written. The override stays in place until you release it.")
+            : outcome.Message.Replace("\n", " ");
+        UpdateOverrideSummary();
+
+        try
+        {
+            var fresh = (await _svc.OpenDevice(deviceRow.Device).ReadSummariesAsync([obj.Id]))[0];
+            row.Refresh(fresh);
+            await LoadPropertiesAsync(row);
+        }
+        catch (Exception) { Status += " (Could not read the point back; check it before you leave.)"; }
+    }
+
+    private void UpdateOverrideSummary()
+    {
+        var n = _overrides.Active.Count;
+        OverrideSummary = n == 0 ? "No overrides in place." : $"{n} override(s) in place from this session.";
+    }
+
+    /// <summary>
+    /// Before disconnecting: list overrides this session left and offer to release them.
+    /// Returns false if the user wants to go back.
+    /// </summary>
+    public async Task<bool> ResolveOverridesAsync()
+    {
+        var active = _overrides.Active;
+        if (active.Count == 0 || _writer is null) return true;
+
+        var text = $"This session left {active.Count} override(s) in place:\n\n" +
+                   string.Join("\n", active.Select(o => "  - " + o.Description)) +
+                   "\n\nRelease them now?\nYes = release them, No = leave them in place, Cancel = go back.";
+        switch (AskYesNoCancel("Overrides still in place", text))
+        {
+            case MessageBoxResult.Cancel:
+                return false;
+            case MessageBoxResult.Yes:
+                var (_, failed) = await _writer.ReleaseAllAsync();
+                UpdateOverrideSummary();
+                return failed == 0 || Confirm("Some overrides could not be released",
+                    $"{failed} override(s) could not be released (see the write log). They are still in place on the device.\n\nContinue anyway?");
+            default:
+                return true;
         }
     }
 
