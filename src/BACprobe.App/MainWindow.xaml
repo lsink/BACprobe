@@ -199,16 +199,18 @@
             </ContextMenu>
           </DataGrid.ContextMenu>
           <DataGrid.Columns>
-            <DataGridTextColumn Header="Instance" Binding="{Binding Instance}" />
-            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
-            <DataGridTextColumn Header="Address" Binding="{Binding Address}" />
+            <!-- Fixed widths: Auto columns measured themselves before any row existed and clipped their content.
+                 Name takes whatever is left. -->
+            <DataGridTextColumn Header="Instance" Binding="{Binding Instance}" Width="80" />
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" MinWidth="140" />
+            <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="200" />
             <DataGridTextColumn Header="Vendor" Binding="{Binding Vendor}" Width="160" />
-            <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="140" />
-            <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" />
-            <DataGridTextColumn Header="Response" Binding="{Binding Response}" />
-            <DataGridTextColumn Header="Max APDU" Binding="{Binding MaxApdu}" />
-            <DataGridTextColumn Header="Segments" Binding="{Binding Segmentation}" />
-            <DataGridTextColumn Header="Clock" Binding="{Binding Clock}" />
+            <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="120" />
+            <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" Width="90" />
+            <DataGridTextColumn Header="Response" Binding="{Binding Response}" Width="90" />
+            <DataGridTextColumn Header="Max APDU" Binding="{Binding MaxApdu}" Width="95" />
+            <DataGridTextColumn Header="Segments" Binding="{Binding Segmentation}" Width="105" />
+            <DataGridTextColumn Header="Clock" Binding="{Binding Clock}" Width="100" />
           </DataGrid.Columns>
         </DataGrid>
         <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" />

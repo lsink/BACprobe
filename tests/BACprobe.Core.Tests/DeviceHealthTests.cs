@@ -58,6 +58,13 @@ public class DeviceHealthTests
         Assert.Contains("time zone", f.LikelyCause);
     }
 
+    [Theory]
+    [InlineData(47, "+47 min")]
+    [InlineData(-310, "-5 h 10 min")]
+    [InlineData(3000, "+2 d")]
+    public void Short_skew_fits_a_table_cell(int minutes, string expected)
+        => Assert.Equal(expected, DeviceHealth.ShortSkew(TimeSpan.FromMinutes(minutes)));
+
     [Fact]
     public void Two_devices_with_one_name_are_flagged()
         => Assert.Contains(DeviceHealth.Check([Dev(1, "AHU-1"), Dev(2, "ahu-1")]), f => f.Title.Contains("both named"));

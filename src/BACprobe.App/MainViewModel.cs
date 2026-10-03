@@ -61,7 +61,7 @@ public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
         _ => "none",
     };
     public string MaxApdu => d.MaxApdu.ToString();
-    public string Clock => d.ClockSkew is { } s ? (s.Duration() < DeviceHealth.ClockSkewLimit ? "ok" : DeviceHealth.DescribeSkew(s)) : "-";
+    public string Clock => d.ClockSkew is { } s ? (s.Duration() < DeviceHealth.ClockSkewLimit ? "ok" : DeviceHealth.ShortSkew(s)) : "-";
 
     /// <summary>The device's details were read: show them.</summary>
     public void Refresh() => OnPropertyChanged(string.Empty);

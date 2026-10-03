@@ -28,6 +28,16 @@ public static class DeviceHealth
         return $"{text} {(skew < TimeSpan.Zero ? "behind" : "ahead of")} this PC";
     }
 
+    /// <summary>Short form for a table cell: "+47 min" (ahead), "-5 h" (behind), "+2 d".</summary>
+    public static string ShortSkew(TimeSpan skew)
+    {
+        var abs = skew.Duration();
+        var sign = skew < TimeSpan.Zero ? "-" : "+";
+        return abs.TotalDays >= 1 ? $"{sign}{(int)abs.TotalDays} d"
+            : abs.TotalHours >= 1 ? $"{sign}{(int)abs.TotalHours} h {abs.Minutes} min"
+            : $"{sign}{(int)Math.Round(abs.TotalMinutes)} min";
+    }
+
     private static string Name(DiscoveredDevice d) => d.ObjectName is { Length: > 0 } n ? $"{n} (device {d.InstanceId})" : $"device {d.InstanceId}";
 
     public static IReadOnlyList<NetworkFinding> Check(IReadOnlyList<DiscoveredDevice> devices)
