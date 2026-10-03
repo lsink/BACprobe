@@ -43,7 +43,7 @@ public sealed class FindingRow(NetworkFinding f)
     public string Help { get; } = $"Likely cause: {f.LikelyCause}{Environment.NewLine}Next step: {f.NextStep}";
 }
 
-public sealed class DeviceRow(DiscoveredDevice d)
+public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
 {
     public DiscoveredDevice Device => d;
     public uint Instance => d.InstanceId;
@@ -52,6 +52,9 @@ public sealed class DeviceRow(DiscoveredDevice d)
     public string Model => d.ModelName ?? "-";
     public string Firmware => d.FirmwareRevision ?? "-";
     public string Name => d.ObjectName ?? "-";
+
+    /// <summary>The device's details were read: show them.</summary>
+    public void Refresh() => OnPropertyChanged(string.Empty);
 }
 
 /// <summary>One entry in the On/Off dropdown: what the tech sees, and the text the write parser understands.</summary>
@@ -443,9 +446,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                          "or devices on another subnet behind a BBMD. Next step: try another adapter or allow BACprobe through Windows Firewall.";
                 return;
             }
-            Status = $"{found.Count} device(s) found. Reading details...";
-            await svc.EnrichAsync(found);
-            foreach (var d in found) Devices.Add(new DeviceRow(d));
+            // Show the devices now and fill in names as each one answers: one slow or unreachable device must not hold up the list.
+            var rows = new Dictionary<DiscoveredDevice, DeviceRow>();
+            foreach (var d in found) Devices.Add(rows[d] = new DeviceRow(d));
+            ExportAllCommand.NotifyCanExecuteChanged();
+            var detailed = 0;
+            Status = $"{found.Count} device(s) found. Reading details (you can select one already)...";
+            await svc.EnrichAsync(found, progress: new Progress<DiscoveredDevice>(d =>
+            {
+                rows[d].Refresh();
+                if (++detailed < found.Count) Status = $"{found.Count} device(s) found. Read details of {detailed}...";
+            }));
             ShowNetworkCheck(svc.CheckNetwork(), found, svc.BuildNetworkMap(found, scanWasFiltered: low >= 0));
             ExportAllCommand.NotifyCanExecuteChanged();
             Status = $"{found.Count} device(s) found. Select one to see its objects.";
@@ -560,7 +571,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private async Task RunLiveAsync(LiveWatcher watcher, CancellationToken ct)
     {
-        var failure = await watcher.RunAsync(ct);
+        // Off the UI thread: the watch loop decodes every poll and notification. Its events already hop back via PostUi.
+        var failure = await Task.Run(() => watcher.RunAsync(ct));
         if (failure is null || ct.IsCancellationRequested) return;
         // The device stopped answering: stop and say why, instead of showing stale numbers as if they were live.
         IsLive = false;
@@ -966,7 +978,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 UpdateOverrideSummary();
                 return failed == 0 || ConfirmContinueAfterFailedRelease(failed);
             default:
-                return true; // leave them in place, on purpose
+                _overrides.Clear(); // left in place on purpose: do not ask about them again
+                UpdateOverrideSummary();
+                return true;
         }
     }
 

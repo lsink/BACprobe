@@ -225,4 +225,10 @@ public sealed class OverrideTracker
     {
         lock (_lock) _active.Remove((device, obj, priority));
     }
+
+    /// <summary>Forget every override, e.g. when the tech chose to leave them in place on purpose.</summary>
+    public void Clear()
+    {
+        lock (_lock) _active.Clear();
+    }
 }

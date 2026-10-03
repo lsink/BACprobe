@@ -103,6 +103,9 @@ public class WritingTests
         Assert.Single(t.Active);
         t.Remove(1001, Ao1, 8); // removing twice is harmless
         Assert.Single(t.Active);
+
+        t.Clear(); // the tech chose to leave them in place
+        Assert.Empty(t.Active);
     }
 
     [Fact]

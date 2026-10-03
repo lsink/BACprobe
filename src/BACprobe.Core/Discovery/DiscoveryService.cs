@@ -113,11 +113,19 @@ public sealed class DiscoveryService : IDisposable
     public static bool InRange(uint instance, int low, int high) =>
         (low < 0 || instance >= (uint)low) && (high < 0 || instance <= (uint)high);
 
-    /// <summary>Read name/vendor/model/firmware. ReadPropertyMultiple first, per-property ReadProperty as fallback.</summary>
-    public async Task EnrichAsync(IEnumerable<DiscoveredDevice> devices, int parallelism = 8, CancellationToken ct = default)
+    /// <summary>
+    /// Read name/vendor/model/firmware. ReadPropertyMultiple first, per-property ReadProperty as fallback.
+    /// <paramref name="progress"/> hears about each device as soon as it is done, so a slow one does not hold up the rest.
+    /// </summary>
+    public async Task EnrichAsync(IEnumerable<DiscoveredDevice> devices, IProgress<DiscoveredDevice>? progress = null,
+        int parallelism = 8, CancellationToken ct = default)
     {
         await Parallel.ForEachAsync(devices, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
-            async (d, token) => await EnrichOneAsync(d, token));
+            async (d, token) =>
+            {
+                await EnrichOneAsync(d, token);
+                progress?.Report(d);
+            });
     }
 
     private static readonly BacnetPropertyIds[] Props =
