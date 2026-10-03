@@ -14,12 +14,13 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--dup] [--unassigned] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
           bacprobe job show  <site.bacprobe> [--device <n>] [--log]
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
+          bacprobe routers   [--adapter <ip>] [--wait <seconds>]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
@@ -33,6 +34,8 @@ internal static partial class Program
                    (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
         export     Save a point list: csv, xlsx (Excel, with a Devices sheet) or ede. Default file: bacprobe-points-<time>.csv
                    in the current folder; an existing file is never overwritten without --force.
+        routers    Ask for routers and list the networks each one says it can reach. 'discover' also prints a network map
+                   (which devices are on which network) and flags networks that look wrong.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan"; add is:overridden for overridden points only. --job searches a saved job offline.
         trend      Show a trend log's settings and recorded history (latest 20 records by default); --out saves all of it as CSV or Excel.
@@ -51,6 +54,8 @@ internal static partial class Program
                    --devices n (default 2), --first instance (default 1001),
                    --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
                    --no-cov makes the last device refuse COV; --cov-limit n makes every device accept only n subscriptions.
+                   --router "1001:3" adds a router to network 1001 with 3 virtual devices (visible, not readable); commas add networks,
+                   semicolons add routers, e.g. --router "1001:3,1002:0;1001:1".
                    --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
@@ -81,6 +86,7 @@ internal static partial class Program
                 "watch" => await WatchAsync(opts),
                 "trend" => await TrendAsync(opts),
                 "find" => await FindAsync(opts),
+                "routers" => await RoutersAsync(opts),
                 "export" => await ExportAsync(opts),
                 "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),
@@ -168,14 +174,17 @@ internal static partial class Program
         }
 
         Console.WriteLine();
-        Console.WriteLine($"{"Instance",-9} {"Address",-22} {"Vendor",-24} {"Model",-18} {"Firmware",-12} Name");
+        var addressWidth = Math.Max(22, devices.Max(d => d.AddressText.Length)); // routed devices have longer addresses
+        Console.WriteLine($"{"Instance",-9} {"Address".PadRight(addressWidth)} {"Vendor",-24} {"Model",-18} {"Firmware",-12} Name");
         foreach (var d in devices)
         {
-            Console.WriteLine($"{d.InstanceId,-9} {d.AddressText,-22} {d.VendorName ?? $"vendor {d.VendorId}",-24} " +
+            Console.WriteLine($"{d.InstanceId,-9} {d.AddressText.PadRight(addressWidth)} {d.VendorName ?? $"vendor {d.VendorId}",-24} " +
                               $"{d.ModelName ?? "-",-18} {d.FirmwareRevision ?? "-",-12} {d.ObjectName ?? "-"}");
             if (d.EnrichError is not null) Console.WriteLine($"          ! {d.EnrichError}");
         }
-        PrintNetworkCheck(svc.CheckNetwork(), opts, devices);
+        var map = svc.BuildNetworkMap(devices, scanWasFiltered: low >= 0);
+        PrintNetworkMap(map, adapter.Cidr);
+        PrintNetworkCheck([.. svc.CheckNetwork(), .. map.Findings], opts, devices);
         return 0;
     }
 
@@ -187,6 +196,7 @@ internal static partial class Program
         if (count < 1 || count > 50) throw new ArgumentException("--devices must be between 1 and 50.");
 
         var sims = new List<SimulatedDevice>();
+        var routers = new List<SimulatedRouter>();
         SimulatedBbmd? bbmdSim = null;
         try
         {
@@ -216,6 +226,21 @@ internal static partial class Program
                 Console.WriteLine($"Simulating device {first + i}{(legacy ? " (refuses ReadPropertyMultiple)" : "")} on {adapter.Address}");
             }
 
+            if (opts.TryGetValue("router", out var routerSpec))
+            {
+                // "1001:3" = one router to network 1001 with 3 devices. Commas add networks to a router; semicolons add routers.
+                var index = 0;
+                foreach (var one in (routerSpec ?? "1001:3").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var nets = one.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(x => x.Split(':')).Select(a => new SimNetwork(ushort.Parse(a[0]), a.Length > 1 ? int.Parse(a[1]) : 3)).ToList();
+                    var router = new SimulatedRouter(adapter, nets, index++) { Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}") };
+                    router.Start();
+                    routers.Add(router);
+                    Console.WriteLine($"Simulating a router to network(s) {string.Join(", ", nets.Select(n => $"{n.Number} ({n.DeviceCount} devices)"))}");
+                }
+            }
+
             // Problems to find: an impostor reusing the first device's number, and a never-commissioned device.
             if (opts.ContainsKey("dup"))
             {
@@ -237,6 +262,7 @@ internal static partial class Program
         catch (Exception ex)
         {
             foreach (var s in sims) s.Dispose();
+            foreach (var r in routers) r.Dispose();
             bbmdSim?.Dispose();
             return Fail($"Could not start the simulator: {ex.Message}\n" +
                         "  Likely cause: another program holds UDP 47808 exclusively.\n" +
@@ -249,6 +275,7 @@ internal static partial class Program
         try { await Task.Delay(Timeout.Infinite, cts.Token); }
         catch (OperationCanceledException) { }
         foreach (var s in sims) s.Dispose();
+        foreach (var r in routers) r.Dispose();
         bbmdSim?.Dispose();
         return 0;
     }

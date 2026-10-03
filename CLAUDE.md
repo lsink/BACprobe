@@ -73,6 +73,8 @@ Network check: `DiscoveryService` keeps EVERY I-Am (`Heard`), not just the first
 
 Point search: `Search/PointSearch` (pure; all words must match, name hits rank first, `is:overridden`). App: `FindWindow` over the same index as Export all (`_pointCache`); `GoToPointAsync` selects the device, waits for its objects to load, then the point. CLI: `bacprobe find`.
 
+Routers / network map: `AddressInfo` (the library reports a device behind a router as the ROUTER's address (net 0) plus `RoutedSource` holding the real network and MAC; always go through `AddressInfo`, never `adr.net`); an I-Am-Router-To-Network body is big-endian uint16 network numbers; `DiscoveryService.AskForRouters` sends Who-Is-Router; `NetworkMapBuilder` is pure. `SimulatedRouter` (`--router "1001:3,1002:0;1001:1"`) makes routed devices that are discoverable but NOT readable. Known gap: job files do not store `RoutedSource`, so a reloaded job cannot talk to a routed device (jobs are offline anyway).
+
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.

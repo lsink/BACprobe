@@ -17,6 +17,9 @@ public sealed class DiscoveredDevice
     /// <summary>Set when enrichment failed entirely; text is meant for the user.</summary>
     public string? EnrichError { get; set; }
 
-    /// <summary>Source address as shown to the user (IP:port, or network:MAC when routed).</summary>
-    public string AddressText => Address.ToString();
+    /// <summary>Address as shown to the user: "ip:port", or "network 1001, MAC 5 (via ip:port)" for a device behind a router.</summary>
+    public string AddressText => AddressInfo.Describe(Address);
+
+    /// <summary>The BACnet network the device is on: 0 for this network, otherwise the number behind a router.</summary>
+    public ushort Network => AddressInfo.NetworkOf(Address);
 }

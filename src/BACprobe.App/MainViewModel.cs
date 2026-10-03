@@ -287,22 +287,29 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     // Network check: conflicts among what answered, and differences from a job opened earlier.
     public ObservableCollection<FindingRow> NetworkFindings { get; } = [];
+    public ObservableCollection<string> NetworkMapLines { get; } = [];
     private IReadOnlyList<SavedDevice>? _baseline;
     private string? _baselineName;
     [ObservableProperty] private bool _hasNetworkCheck;
     [ObservableProperty] private bool _networkCheckExpanded;
     [ObservableProperty] private string _networkCheckSummary = "";
 
-    private void ShowNetworkCheck(IReadOnlyList<NetworkFinding> conflicts, IReadOnlyList<DiscoveredDevice> found)
+    private void ShowNetworkCheck(IReadOnlyList<NetworkFinding> conflicts, IReadOnlyList<DiscoveredDevice> found, NetworkMap map)
     {
         var findings = new List<NetworkFinding>(conflicts);
+        findings.AddRange(map.Findings);
+
+        NetworkMapLines.Clear();
+        foreach (var line in map.Lines(SelectedAdapter?.Info.Cidr ?? "this subnet")) NetworkMapLines.Add(line);
         if (_baseline is not null) findings.AddRange(NetworkCheck.Compare(_baseline, found));
 
         NetworkFindings.Clear();
         foreach (var f in findings.OrderByDescending(f => f.Severity)) NetworkFindings.Add(new FindingRow(f));
         var worst = findings.Count == 0 ? (FindingSeverity?)null : findings.Max(f => f.Severity);
         var icon = worst switch { FindingSeverity.Problem => "✖", FindingSeverity.Warning => "⚠", FindingSeverity.Info => "ℹ", _ => "✔" };
-        NetworkCheckSummary = $"{icon} Network check{(_baselineName is null ? "" : $" (compared with job \"{_baselineName}\")")}: {NetworkCheck.Summarize(findings)}";
+        var routed = map.Networks.Count(n => !n.IsLocal);
+        NetworkCheckSummary = $"{icon} Network check{(_baselineName is null ? "" : $" (compared with job \"{_baselineName}\")")}: {NetworkCheck.Summarize(findings)}" +
+                              (routed > 0 ? $"  -  {routed} routed network(s)" : "");
         NetworkCheckExpanded = worst == FindingSeverity.Problem; // open by itself only for something that needs fixing
         HasNetworkCheck = true;
     }
@@ -310,6 +317,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ClearNetworkCheck()
     {
         NetworkFindings.Clear();
+        NetworkMapLines.Clear();
         NetworkCheckSummary = "";
         HasNetworkCheck = false;
     }
@@ -435,7 +443,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Status = $"{found.Count} device(s) found. Reading details...";
             await svc.EnrichAsync(found);
             foreach (var d in found) Devices.Add(new DeviceRow(d));
-            ShowNetworkCheck(svc.CheckNetwork(), found);
+            ShowNetworkCheck(svc.CheckNetwork(), found, svc.BuildNetworkMap(found, scanWasFiltered: low >= 0));
             ExportAllCommand.NotifyCanExecuteChanged();
             Status = $"{found.Count} device(s) found. Select one to see its objects.";
         }

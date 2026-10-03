@@ -119,6 +119,18 @@
       <!-- Network check: conflicts and differences from a saved job. One line unless something needs fixing. -->
       <Expander DockPanel.Dock="Top" Header="{Binding NetworkCheckSummary}" IsExpanded="{Binding NetworkCheckExpanded, Mode=TwoWay}"
                 Margin="0,0,0,8" Visibility="{Binding HasNetworkCheck, Converter={StaticResource BoolToVis}}">
+        <!-- Capped, with its own scrollbar, so a long list of findings can never push the device list off screen -->
+        <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+        <!-- Which devices are on which network -->
+        <TextBlock Text="Network map" FontWeight="SemiBold" Margin="4,6,0,2" />
+        <ItemsControl ItemsSource="{Binding NetworkMapLines}" Margin="4,0,0,4">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}" Margin="18,1,0,1" TextWrapping="Wrap" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
         <ItemsControl ItemsSource="{Binding NetworkFindings}" Margin="4,6,0,4">
           <ItemsControl.ItemTemplate>
             <DataTemplate DataType="{x:Type app:FindingRow}">
@@ -143,6 +155,8 @@
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
+        </StackPanel>
+        </ScrollViewer>
       </Expander>
       <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="8,6" BorderBrush="DarkOrange" BorderThickness="1" CornerRadius="4">
         <Border.Style>

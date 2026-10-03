@@ -17,6 +17,7 @@ public sealed class DiscoveryService : IDisposable
             localEndpointIp: adapter.Address.ToString());
         _client = new BacnetClient(_transport, timeoutMs, retries);
         _client.OnIam += OnIam;
+        _client.OnIAmRouterToNetworkMessage += OnIAmRouter;
     }
 
     /// <summary>Set after <see cref="RegisterWithBbmdAsync"/>. While registered, Who-Is also goes through the BBMD.</summary>
@@ -51,12 +52,37 @@ public sealed class DiscoveryService : IDisposable
         BacnetSegmentations segmentation, ushort vendorId)
     {
         // Keep every reply, not just the first per device number: a second device using the same number would otherwise be invisible.
-        _heard.Enqueue(new IAmObservation(deviceId, adr.ToString(), adr.net, Convert.ToHexString(adr.adr ?? []), vendorId));
+        _heard.Enqueue(new IAmObservation(deviceId, AddressInfo.Describe(adr), AddressInfo.NetworkOf(adr), AddressInfo.MacOf(adr), vendorId));
         _devices.TryAdd(deviceId, new DiscoveredDevice
         {
             InstanceId = deviceId, Address = adr, MaxApdu = maxApdu, Segmentation = segmentation, VendorId = vendorId,
         });
     }
+
+    private readonly ConcurrentDictionary<string, HashSet<ushort>> _routers = new();
+
+    private void OnIAmRouter(BacnetClient sender, BacnetAddress adr, BacnetNpduControls npduFunction, byte[] buffer, int offset, int messageLength)
+    {
+        var body = buffer.AsSpan(offset, Math.Max(0, Math.Min(messageLength, buffer.Length - offset)));
+        var networks = RouterAnnouncement.ParseNetworks(body);
+        var set = _routers.GetOrAdd(adr.ToString(), _ => []);
+        lock (set) foreach (var n in networks) set.Add(n);
+    }
+
+    /// <summary>Routers that have announced themselves, with the networks each one says it can reach.</summary>
+    public IReadOnlyList<RouterObservation> Routers =>
+        [.. _routers.OrderBy(kv => kv.Key).Select(kv => { lock (kv.Value) return new RouterObservation(kv.Key, [.. kv.Value.Order()]); })];
+
+    /// <summary>Broadcast "who is a router?" so routers announce which networks they serve.</summary>
+    public void AskForRouters() =>
+        _client.SendNetworkMessage(_transport.GetBroadcastAddress(), [], 0, BacnetNetworkMessageTypes.NETWORK_MESSAGE_WHO_IS_ROUTER_TO_NETWORK);
+
+    /// <summary>
+    /// The network map: devices grouped by network, matched to the routers that announced them, with findings for
+    /// things that look wrong. Pass true for <paramref name="scanWasFiltered"/> if the scan used a device-number range.
+    /// </summary>
+    public NetworkMap BuildNetworkMap(IReadOnlyList<DiscoveredDevice> devices, bool scanWasFiltered = false) =>
+        NetworkMapBuilder.Build(devices, Routers, scanWasFiltered);
 
     /// <summary>Every I-Am heard so far, including repeats and conflicting duplicates.</summary>
     public IReadOnlyList<IAmObservation> Heard => [.. _heard];
@@ -68,6 +94,8 @@ public sealed class DiscoveryService : IDisposable
     public async Task<IReadOnlyList<DiscoveredDevice>> WhoIsAsync(int low, int high, TimeSpan wait, CancellationToken ct = default)
     {
         _client.WhoIs(low, high);
+        try { AskForRouters(); }
+        catch (Exception) { /* a transport that cannot send network messages: devices on this network are still found */ }
         if (BbmdRegistration is { IsRegistered: true } bbmd) bbmd.RemoteWhoIs(low, high); // BBMD forwards it to its other subnets
         try { await Task.Delay(wait, ct); }
         catch (OperationCanceledException) { }
