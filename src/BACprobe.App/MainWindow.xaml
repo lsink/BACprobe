@@ -6,6 +6,9 @@
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BoolToVis" />
   </Window.Resources>
+  <Window.InputBindings>
+    <KeyBinding Key="F" Modifiers="Control" Command="{Binding OpenFindCommand}" />
+  </Window.InputBindings>
   <Window.DataContext>
     <app:MainViewModel />
   </Window.DataContext>
@@ -104,6 +107,9 @@
         <TextBox Text="{Binding TtlText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="4,0,12,0"
                  ToolTip="How long the BBMD keeps you registered. BACprobe renews automatically." />
         <Button Content="Scan" Padding="20,4" Command="{Binding ScanCommand}" />
+        <Button Content="Find point..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenFindCommand}"
+                AutomationProperties.Name="Find point"
+                ToolTip="Search every point on every device by name, description, type or value (Ctrl+F)." />
         <Button Content="Export device..." Padding="12,4" Margin="12,0,0,0" Command="{Binding ExportSelectedCommand}"
                 ToolTip="Save the selected device point list as Excel, CSV or EDE." />
         <Button Content="Export all..." Padding="12,4" Margin="8,0,0,0" Command="{Binding ExportAllCommand}"

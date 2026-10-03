@@ -119,6 +119,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: shows a Save dialog (suggested file name in); null if the user cancels.</summary>
     public Func<string, (string Path, ExportFormat Format)?> PickExportFile { get; set; } = _ => null;
 
+    /// <summary>Set by the window: opens the Find window.</summary>
+    public Action<FindViewModel> ShowFind { get; set; } = _ => { };
+
     /// <summary>Set by the window: opens the Trend window for a trend log.</summary>
     public Action<TrendViewModel> ShowTrend { get; set; } = _ => { };
 
@@ -178,6 +181,47 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _isBinarySelected;
 
     public bool IsNotBinarySelected => !IsBinarySelected;
+
+    /// <summary>Open the Find window: search every point on every device read so far.</summary>
+    [RelayCommand]
+    private void OpenFind() => ShowFind(new FindViewModel(
+        getIndex: () => [.. _pointCache.Values],
+        deviceCount: () => Devices.Count,
+        readAllDevices: async progress =>
+        {
+            IsExporting = true; // blocks Scan while we read every device
+            try
+            {
+                var (collected, _) = await CollectAllAsync(progress);
+                return collected.Count;
+            }
+            finally { IsExporting = false; }
+        },
+        goTo: GoToPointAsync));
+
+    /// <summary>Select a device and one of its points in the main window (used by Find). Waits for the device's objects to load.</summary>
+    private async Task GoToPointAsync(uint instance, BacnetObjectId id)
+    {
+        var device = Devices.FirstOrDefault(d => d.Instance == instance);
+        if (device is null)
+        {
+            Status = $"Device {instance} is no longer in the list. Scan again to find it.";
+            return;
+        }
+
+        if (!ReferenceEquals(SelectedDevice, device)) SelectedDevice = device; // loads its objects
+        for (var i = 0; i < 150; i++) // up to about 15 s for a slow device
+        {
+            var row = Objects.FirstOrDefault(o => o.Summary.Id == id);
+            if (row is not null)
+            {
+                SelectedObject = row;
+                return;
+            }
+            await Task.Delay(100);
+        }
+        Status = "That point did not appear in the device's object list. Likely cause: the device is slow or the object was removed. Next step: select the device again.";
+    }
 
     // Trend logs have no value to write; instead the tech can open their history.
     [ObservableProperty]

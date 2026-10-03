@@ -20,6 +20,7 @@ internal static partial class Program
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
           bacprobe job show  <site.bacprobe> [--device <n>] [--log]
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
+          bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
@@ -32,6 +33,8 @@ internal static partial class Program
                    (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
         export     Save a point list: csv, xlsx (Excel, with a Devices sheet) or ede. Default file: bacprobe-points-<time>.csv
                    in the current folder; an existing file is never overwritten without --force.
+        find       Search every device for points by words in the name, description, type, units or value (all words must match).
+                   Quote a phrase, e.g. "supply fan"; add is:overridden for overridden points only. --job searches a saved job offline.
         trend      Show a trend log's settings and recorded history (latest 20 records by default); --out saves all of it as CSV or Excel.
         watch      Print a line whenever a point value or override changes. Uses COV where the device supports it (--poll forces polling;
                    --interval is the polling interval, default 2 s). Ctrl+C to stop.
@@ -77,6 +80,7 @@ internal static partial class Program
                 "read" => await ReadAsync(opts),
                 "watch" => await WatchAsync(opts),
                 "trend" => await TrendAsync(opts),
+                "find" => await FindAsync(opts),
                 "export" => await ExportAsync(opts),
                 "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),

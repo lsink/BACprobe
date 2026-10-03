@@ -12,6 +12,7 @@ It has not yet been run against real controllers. Expect rough edges, and please
   holding the port, warns about virtual adapters and two adapters on one subnet. Every problem comes with a likely cause and a next step.
 - **Discovery** - Who-Is (optionally an instance range), then reads name, vendor, model and firmware for each device.
 - **Network check** - after every scan, flags two devices using the same device number, a device that was never given one (4194303), two MS/TP devices with the same MAC, and a gateway answering as several devices. Open a saved job first and the scan also reports what is missing, new, moved or changed since. Each finding says the likely cause and what to do.
+- **Find a point** (Ctrl+F) - type words and see every matching point on every device: `zone temp`, `"supply fan"`, `damper is:overridden`. All words must match the name, description, type, units, value or device name, with name matches first. Double-click a result to jump to it. Works from a saved job offline too.
 - **Object browser** - object list with names, values and units; every property of an object. Vendor-specific
   properties and object types are shown as "vendor-specific" with raw values, never hidden.
 - **Live values** - switch on "Live values" and the point list keeps itself up to date, so you can watch a damper move, see a write take effect, or catch someone else's override appear. It asks the device to push changes (COV) and polls only the points or devices that refuse; changed values flash blue. Subscriptions are renewed automatically, and a slow safety poll catches anything missed.
@@ -56,6 +57,7 @@ dotnet run --project src/BACprobe.Cli -- discover
 | `adapters` / `preflight` | List network adapters; run the pre-flight checks |
 | `discover [--bbmd <ip>]` | Find devices |
 | `objects --device <n>` | List a device's objects with values |
+| `find <words> [--device <n> \| --job <file>]` | Search every device (or a saved job) for points |
 | `trend --device <n> --object tl:1 [--last 50 \| --all] [--out file.xlsx]` | Show a trend log and save its records |
 | `watch --device <n> [--object ai:1] [--poll]` | Print a line whenever a value or override changes (COV where supported) |
 | `read --device <n> --object ai:1 [--property present-value]` | Read all (or one) property of a point |

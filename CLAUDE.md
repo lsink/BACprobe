@@ -71,6 +71,8 @@ Trend logs: `Trends/` (`TrendLogReader` reads settings + pages through records b
 
 Network check: `DiscoveryService` keeps EVERY I-Am (`Heard`), not just the first per device number, because a duplicate would otherwise be invisible; `NetworkCheck.Analyze` finds conflicts and `NetworkCheck.Compare` diffs against a saved job (IP only: a changed port is not a move). Simulator: `--dup`, `--unassigned`.
 
+Point search: `Search/PointSearch` (pure; all words must match, name hits rank first, `is:overridden`). App: `FindWindow` over the same index as Export all (`_pointCache`); `GoToPointAsync` selects the device, waits for its objects to load, then the point. CLI: `bacprobe find`.
+
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.

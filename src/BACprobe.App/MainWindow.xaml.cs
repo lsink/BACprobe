@@ -44,6 +44,7 @@ public partial class MainWindow : Window
             };
             vm.ConfirmContinueAfterFailedRelease = failed => PromptWindow.Show(this, Prompts.ReleaseFailed(failed),
                 [new PromptButton("Go back", IsCancel: true), new PromptButton("Continue anyway")]) == 1;
+            vm.ShowFind = find => new FindWindow(find) { Owner = this }.Show();
             vm.ShowTrend = trend => new TrendWindow(trend) { Owner = this }.Show();
             vm.PickTrendFile = suggested =>
                 TrendWindow.PickFile((Window?)OwnedWindows.OfType<TrendWindow>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
