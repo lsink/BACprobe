@@ -44,6 +44,14 @@ public partial class MainWindow : Window
             };
             vm.ConfirmContinueAfterFailedRelease = failed => PromptWindow.Show(this, Prompts.ReleaseFailed(failed),
                 [new PromptButton("Go back", IsCancel: true), new PromptButton("Continue anyway")]) == 1;
+            vm.ShowTrend = trend => new TrendWindow(trend) { Owner = this }.Show();
+            vm.PickTrendFile = suggested =>
+                TrendWindow.PickFile((Window?)OwnedWindows.OfType<TrendWindow>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
+            // A trend window reads through the connection that opened it: close them when that connection is replaced.
+            vm.ConnectionReset += () =>
+            {
+                foreach (var w in OwnedWindows.OfType<TrendWindow>().ToList()) w.Close();
+            };
             vm.PickExportFile = suggested =>
             {
                 var dialog = new SaveFileDialog

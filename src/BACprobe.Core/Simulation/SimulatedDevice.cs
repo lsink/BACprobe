@@ -58,6 +58,7 @@ public sealed class SimulatedDevice : IDisposable
         _client.OnReadPropertyMultipleRequest += OnReadPropertyMultiple;
         _client.OnWritePropertyRequest += OnWriteProperty;
         _client.OnSubscribeCOV += OnSubscribeCov;
+        _client.OnReadRange += OnReadRange;
     }
 
     public void Start()
@@ -149,6 +150,53 @@ public sealed class SimulatedDevice : IDisposable
             Log?.Invoke($"[{Model.Instance}] WriteProperty {objectId} {prop} from {adr} -> {err.Value.Code}");
             sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_WRITE_PROPERTY, invokeId, err.Value.Class, err.Value.Code);
         }
+    }
+
+    /// <summary>How many bytes of records one answer may carry, like the packet-size limit of a real controller. Forces paging.</summary>
+    private const int MaxAnswerBytes = 380;
+
+    private void OnReadRange(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetObjectId objectId,
+        BacnetPropertyReference property, BacnetReadRangeRequestTypes requestType, uint position, DateTime time, int count,
+        BacnetMaxSegments maxSegments)
+    {
+        List<BacnetLogRecord> slice = [];
+        uint firstSequence = 0;
+        bool isFirst = false, isLast = false;
+        SimError err = default;
+        var asked = property.propertyIdentifier == (uint)BacnetPropertyIds.PROP_LOG_BUFFER;
+        if (!asked || !Model.TryReadLog(objectId, requestType, position, time, count, out slice, out firstSequence, out isFirst,
+                out isLast, out err))
+        {
+            var code = err.Code == 0 ? BacnetErrorCodes.ERROR_CODE_UNKNOWN_PROPERTY : err.Code;
+            var cls = err.Code == 0 ? BacnetErrorClasses.ERROR_CLASS_PROPERTY : err.Class;
+            Log?.Invoke($"[{Model.Instance}] ReadRange {objectId} from {adr} -> {code}");
+            sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_READ_RANGE, invokeId, cls, code);
+            return;
+        }
+
+        // Pack as many records as fit in one answer; flag MORE_ITEMS if some were left out.
+        var buffer = new EncodeBuffer();
+        var sent = 0;
+        foreach (var record in slice)
+        {
+            var before = buffer.offset;
+            Services.EncodeLogRecord(buffer, record);
+            if (buffer.offset > MaxAnswerBytes && sent > 0)
+            {
+                buffer.offset = before;
+                break;
+            }
+            sent++;
+        }
+
+        var flags = BacnetResultFlags.NONE;
+        if (isFirst) flags |= BacnetResultFlags.FIRST_ITEM;
+        if (isLast && sent == slice.Count) flags |= BacnetResultFlags.LAST_ITEM;
+        if (sent < slice.Count || !isLast) flags |= BacnetResultFlags.MORE_ITEMS;
+
+        Log?.Invoke($"[{Model.Instance}] ReadRange {objectId} {requestType} pos {position} count {count} from {adr} -> {sent} record(s)");
+        sender.ReadRangeResponse(adr, invokeId, null, objectId, property, flags, (uint)sent,
+            buffer.buffer.AsSpan(0, buffer.offset).ToArray(), requestType, firstSequence);
     }
 
     private void OnSubscribeCov(BacnetClient sender, BacnetAddress adr, byte invokeId, uint process, BacnetObjectId objectId,

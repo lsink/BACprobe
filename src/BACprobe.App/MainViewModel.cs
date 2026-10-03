@@ -109,6 +109,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: shows a Save dialog (suggested file name in); null if the user cancels.</summary>
     public Func<string, (string Path, ExportFormat Format)?> PickExportFile { get; set; } = _ => null;
 
+    /// <summary>Set by the window: opens the Trend window for a trend log.</summary>
+    public Action<TrendViewModel> ShowTrend { get; set; } = _ => { };
+
+    /// <summary>Set by the window: Save dialog for trend data (Excel or CSV); null if cancelled.</summary>
+    public Func<string, (string Path, ExportFormat Format)?> PickTrendFile { get; set; } = _ => null;
+
+    /// <summary>Raised when the connection is replaced (a new scan, or a job was opened), so windows built on it can close.</summary>
+    public event Action? ConnectionReset;
+
     /// <summary>Set by the window: Save dialog for a job file (suggested name in); null if cancelled.</summary>
     public Func<string, string?> PickJobSavePath { get; set; } = _ => null;
 
@@ -159,6 +168,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _isBinarySelected;
 
     public bool IsNotBinarySelected => !IsBinarySelected;
+
+    // Trend logs have no value to write; instead the tech can open their history.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ViewTrendCommand))]
+    private bool _isTrendSelected;
+
+    [RelayCommand(CanExecute = nameof(IsTrendSelected))]
+    private void ViewTrend()
+    {
+        if (_svc is null || SelectedObject is null || SelectedDevice is null) return;
+        var device = SelectedDevice;
+        var name = device.Name == "-" ? $"Device {device.Instance}" : device.Name;
+        ShowTrend(new TrendViewModel(_svc.OpenTrendLogs(device.Device), SelectedObject.Summary.Id, name, device.Instance, PickTrendFile));
+    }
     [ObservableProperty] private BinaryChoice? _selectedBinaryChoice;
 
     partial void OnSelectedBinaryChoiceChanged(BinaryChoice? value)
@@ -295,6 +318,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsScanning = true;
         StopLive();
         CanUseLive = false;
+        ConnectionReset?.Invoke();
         ResetBrowsing();
         OfflineBanner = "";
         Status = "Sending Who-Is...";
@@ -486,6 +510,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         WriteValueText = "";
         SelectedBinaryChoice = null;
         IsBinarySelected = value?.Summary.Id.type is BacnetObjectTypes.OBJECT_BINARY_OUTPUT or BacnetObjectTypes.OBJECT_BINARY_VALUE;
+        IsTrendSelected = value?.Summary.Id.type == BacnetObjectTypes.OBJECT_TRENDLOG && _svc is not null;
         if (IsBinarySelected && value is not null)
         {
             // Most overrides flip the point, so start on the opposite of what it is now. The confirmation still shows the new value.
@@ -653,6 +678,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // Opening a job leaves live mode: close the connection and show the saved snapshot.
         IsLive = false;
         CanUseLive = false;
+        ConnectionReset?.Invoke();
         _browseCts?.Cancel();
         _svc?.Dispose();
         _svc = null;

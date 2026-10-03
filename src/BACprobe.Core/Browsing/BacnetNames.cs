@@ -49,6 +49,7 @@ public static class BacnetNames
     public static string ObjectTypeName(BacnetObjectTypes type)
     {
         if ((int)type >= ProprietaryObjectTypeMin) return $"Vendor-specific type {(int)type}";
+        if (type == BacnetObjectTypes.OBJECT_TRENDLOG) return "Trend Log"; // the enum name has no word break
         return Enum.IsDefined(type) ? Prettify(type.ToString(), "OBJECT_") : $"Unknown type {(int)type}";
     }
 
@@ -137,6 +138,10 @@ public static class BacnetNames
                 return v.Value is true ? "true" : "false";
             case BacnetApplicationTags.BACNET_APPLICATION_TAG_OBJECT_ID when v.Value is BacnetObjectId oid:
                 return ObjectLabel(oid);
+            case BacnetApplicationTags.BACNET_APPLICATION_TAG_UNSIGNED_INT when property == BacnetPropertyIds.PROP_LOG_INTERVAL:
+                // BACnet counts a trend log's interval in hundredths of a second; 0 means "logs on change".
+                var cs = Convert.ToUInt32(v.Value, CultureInfo.InvariantCulture);
+                return cs == 0 ? "on change" : $"{cs / 100.0:0.##} s";
             case BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED:
                 var n = Convert.ToUInt32(v.Value, CultureInfo.InvariantCulture);
                 if (property == BacnetPropertyIds.PROP_UNITS) return UnitsName(n);

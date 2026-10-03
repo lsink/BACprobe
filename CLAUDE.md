@@ -66,6 +66,8 @@ CLI commands: adapters, preflight, discover, objects, read, write, release, expo
 
 Phase 2 started: live values. `Live/LiveWatcher` keeps a device current with COV (`CovSession`: unconfirmed subscriptions, renewed at half the lifetime, cancelled on exit) and polls points the device refuses (`DeviceBrowser.RefreshValuesAsync`), plus a 30 s safety poll (notifications can be lost, devices forget subscriptions on restart, and COV does not carry priority arrays). App toggle + `bacprobe watch`. The simulator supports COV (`--no-cov` makes the last device refuse, `--cov-limit n` caps subscriptions) and drifts analog inputs (`--still` stops that). Subscription process ids come from one process-wide counter: the device keys on (subscriber, id, object).
 
+Trend logs: `Trends/` (`TrendLogReader` reads settings + pages through records by position with ReadRange; `TrendRecordDecoder`; `TrendStats`; `TrendExporter`). App: "View trend..." opens `TrendWindow` (custom `TrendChart` control, no chart library). The simulator has two trend logs (a record every 10 s, 300/120 records of history) and answers ReadRange in small pages to force paging.
+
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.
@@ -73,4 +75,8 @@ Learned the hard way:
 - SQLite: use `Pooling=False`, or the job file stays locked after Dispose.
 - Text from devices is untrusted: parameterised SQL always, and neutralise leading `= + - @` in CSV.
 - WPF projects do not implicitly import `System.IO`.
+- `Services.DecodeLogRecord` decodes ONE record per call and returns the bytes it used: loop on it. BACnet log timestamps have 1/100 s precision and no time zone.
+- `ReadRangeAsync` returns only bytes + item count (no MORE_ITEMS flag): page by position using the log's Record_Count. Never ask a log object for PROP_ALL (it can drag in Log_Buffer); name the properties.
+- Log_Interval is in hundredths of a second (0 = logs on change).
+- Do not `BasedOn="{StaticResource {x:Type ...}}"` a WPF control style here: it resolved to the light classic theme. Use element styles/converters instead.
 - EDE layout was written from memory of the common format and is unverified against a real consumer.

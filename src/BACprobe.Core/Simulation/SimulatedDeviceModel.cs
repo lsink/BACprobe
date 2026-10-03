@@ -1,4 +1,5 @@
 using System.IO.BACnet;
+using System.IO.BACnet.Serialize;
 
 namespace BACprobe.Core.Simulation;
 
@@ -19,6 +20,18 @@ public sealed class SimulatedDeviceModel
         /// <summary>Non-null for commandable objects; index 0 = priority 1.</summary>
         public BacnetValue?[]? Priority { get; set; }
         public BacnetValue RelinquishDefault { get; set; }
+        public SimTrend? Trend { get; set; }
+    }
+
+    /// <summary>The recorded history of one trend log, newest at the end.</summary>
+    private sealed class SimTrend(BacnetObjectId source, TimeSpan interval, int bufferSize)
+    {
+        public BacnetObjectId Source { get; } = source;
+        public TimeSpan Interval { get; } = interval;
+        public int BufferSize { get; } = bufferSize;
+        public List<BacnetLogRecord> Buffer { get; } = [];
+        public uint Total { get; set; }
+        public DateTime LastLogged { get; set; }
     }
 
     private readonly Dictionary<BacnetObjectId, SimObject> _objects = [];
@@ -134,6 +147,134 @@ public sealed class SimulatedDeviceModel
                 var value = Raw(outObj, BacnetPropertyIds.PROP_PRESENT_VALUE);
                 if (value is { Count: 1 }) i.Props[BacnetPropertyIds.PROP_PRESENT_VALUE] = [value[0]];
             }
+            LogDue(DateTime.Now);
+        }
+    }
+
+    /// <summary>
+    /// Add a trend log that records <paramref name="source"/> every <paramref name="interval"/>, starting with
+    /// <paramref name="historyRecords"/> of believable past data so there is something to read on day one.
+    /// </summary>
+    public void AddTrendLog(uint instance, string name, string description, BacnetObjectId source, TimeSpan interval,
+        int historyRecords, int bufferSize = 1000)
+    {
+        var o = Add(BacnetObjectTypes.OBJECT_TRENDLOG, instance, name);
+        var trend = new SimTrend(source, interval, bufferSize);
+        o.Trend = trend;
+        Set(o, BacnetPropertyIds.PROP_DESCRIPTION, Str(description));
+        Set(o, BacnetPropertyIds.PROP_ENABLE, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, true));
+        Set(o, BacnetPropertyIds.PROP_LOG_INTERVAL, Uint((uint)(interval.TotalMilliseconds / 10))); // hundredths of a second
+        Set(o, BacnetPropertyIds.PROP_STOP_WHEN_FULL, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, false));
+        Set(o, BacnetPropertyIds.PROP_BUFFER_SIZE, Uint((uint)bufferSize));
+        Set(o, BacnetPropertyIds.PROP_RECORD_COUNT, Uint(0)); // placeholders: the real values come from Raw()
+        Set(o, BacnetPropertyIds.PROP_TOTAL_RECORD_COUNT, Uint(0));
+        Set(o, BacnetPropertyIds.PROP_LOG_DEVICE_OBJECT_PROPERTY,
+            new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_DEVICE_OBJECT_PROPERTY_REFERENCE,
+                new BacnetDeviceObjectPropertyReference(source, BacnetPropertyIds.PROP_PRESENT_VALUE, null, uint.MaxValue)));
+
+        // History: a gentle wave plus noise for numbers, an occasional switch for on/off points. Deterministic per log.
+        var rng = new Random((int)(Instance * 31 + instance));
+        var now = DateTime.Now;
+        lock (_lock)
+        {
+            var current = _objects.TryGetValue(source, out var src) ? Raw(src, BacnetPropertyIds.PROP_PRESENT_VALUE) : null;
+            var isReal = current is [{ Value: float }];
+            var baseValue = isReal ? (float)current![0].Value : 0f;
+            var on = rng.Next(2) == 0;
+            for (var i = historyRecords; i >= 1; i--)
+            {
+                var stamp = now - TimeSpan.FromTicks(interval.Ticks * i);
+                if (isReal)
+                {
+                    var v = baseValue + 1.5 * Math.Sin(i / 25.0) + (rng.NextDouble() - 0.5) * 0.6;
+                    trend.Buffer.Add(new BacnetLogRecord(BacnetTrendLogValueType.TL_TYPE_REAL, (float)Math.Round(v, 1), stamp, 0));
+                }
+                else
+                {
+                    if (rng.Next(25) == 0) on = !on;
+                    trend.Buffer.Add(new BacnetLogRecord(BacnetTrendLogValueType.TL_TYPE_BOOL, on, stamp, 0));
+                }
+                trend.Total++;
+            }
+            trend.LastLogged = now;
+        }
+    }
+
+    /// <summary>Append a record to every trend log whose interval has passed. Called with the lock held.</summary>
+    private void LogDue(DateTime now)
+    {
+        foreach (var o in _objects.Values)
+        {
+            if (o.Trend is not { } t || now - t.LastLogged < t.Interval) continue;
+            t.LastLogged = now;
+            if (!_objects.TryGetValue(t.Source, out var src)) continue;
+            var v = Raw(src, BacnetPropertyIds.PROP_PRESENT_VALUE);
+            if (v is not [{ } first]) continue;
+
+            t.Buffer.Add(first.Value is float f
+                ? new BacnetLogRecord(BacnetTrendLogValueType.TL_TYPE_REAL, f, now, 0)
+                : new BacnetLogRecord(BacnetTrendLogValueType.TL_TYPE_BOOL, Convert.ToUInt32(first.Value) != 0, now, 0));
+            t.Total++;
+            if (t.Buffer.Count > t.BufferSize) t.Buffer.RemoveAt(0); // full buffer: the oldest record is lost
+        }
+    }
+
+    /// <summary>
+    /// The slice of a trend log a ReadRange request asks for (by position, by time, or everything).
+    /// Positions are 1-based; a negative count reads backwards from the position.
+    /// </summary>
+    public bool TryReadLog(BacnetObjectId id, BacnetReadRangeRequestTypes type, uint position, DateTime time, int count,
+        out List<BacnetLogRecord> slice, out uint firstSequence, out bool isFirst, out bool isLast, out SimError error)
+    {
+        lock (_lock)
+        {
+            slice = [];
+            firstSequence = 0;
+            isFirst = isLast = false;
+            if (!Resolve(id, out var o))
+            {
+                error = new(BacnetErrorClasses.ERROR_CLASS_OBJECT, BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT);
+                return false;
+            }
+            if (o.Trend is not { } t)
+            {
+                error = new(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_UNKNOWN_PROPERTY);
+                return false;
+            }
+
+            var n = t.Buffer.Count;
+            var bufferFirstSeq = (int)t.Total - n + 1;
+            int start, take;
+            switch (type)
+            {
+                case BacnetReadRangeRequestTypes.RR_READ_ALL:
+                    start = 0; take = n;
+                    break;
+                case BacnetReadRangeRequestTypes.RR_BY_TIME:
+                    var firstAtOrAfter = t.Buffer.FindIndex(r => r.timestamp >= time);
+                    if (firstAtOrAfter < 0) firstAtOrAfter = n;
+                    if (count >= 0) { start = firstAtOrAfter; take = count; }
+                    else { take = -count; start = firstAtOrAfter - take; }
+                    break;
+                case BacnetReadRangeRequestTypes.RR_BY_SEQUENCE:
+                    var seqIndex = (int)position - bufferFirstSeq;
+                    if (count >= 0) { start = seqIndex; take = count; }
+                    else { take = -count; start = seqIndex - take + 1; }
+                    break;
+                default: // by position
+                    if (count >= 0) { start = (int)position - 1; take = count; }
+                    else { take = -count; start = (int)position - take; }
+                    break;
+            }
+
+            if (start < 0) { take += start; start = 0; }
+            take = Math.Clamp(take, 0, Math.Max(0, n - start));
+            slice = start < n ? t.Buffer.GetRange(start, take) : [];
+            firstSequence = (uint)Math.Max(1, bufferFirstSeq + start);
+            isFirst = start == 0;
+            isLast = start + take >= n;
+            error = default;
+            return true;
         }
     }
 
@@ -151,6 +292,11 @@ public sealed class SimulatedDeviceModel
         m.AddBinaryValue(1, "Occupied", "Occupancy mode", true);
         m.AddBinaryOutput(1, "Fan Command", "Supply fan start/stop", false);
         m.AddFollower(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_INPUT, 1), new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_OUTPUT, 1));
+        // Trend logs: a new record every 10 s so they visibly grow while you watch (real logs are usually 1 to 15 minutes).
+        m.AddTrendLog(1, "Zone Temp Trend", "Zone temperature history", new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1),
+            TimeSpan.FromSeconds(10), historyRecords: 300);
+        m.AddTrendLog(2, "Fan Status Trend", "Supply fan proof history", new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_INPUT, 1),
+            TimeSpan.FromSeconds(10), historyRecords: 120);
         return m;
     }
 
@@ -177,6 +323,11 @@ public sealed class SimulatedDeviceModel
     private List<BacnetValue>? Raw(SimObject o, BacnetPropertyIds p)
     {
         if (p == BacnetPropertyIds.PROP_OBJECT_LIST && ReferenceEquals(o, _device)) return ObjectList();
+        if (o.Trend is { } t)
+        {
+            if (p == BacnetPropertyIds.PROP_RECORD_COUNT) return [Uint((uint)t.Buffer.Count)];
+            if (p == BacnetPropertyIds.PROP_TOTAL_RECORD_COUNT) return [Uint(t.Total)];
+        }
         if (o.Priority is not null)
         {
             if (p == BacnetPropertyIds.PROP_PRIORITY_ARRAY)

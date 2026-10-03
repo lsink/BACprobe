@@ -252,13 +252,27 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
     }
 
     /// <summary>Every property the device will give us for one object. Vendor-specific ones are flagged, never hidden.</summary>
+    // Log objects hold their history in Log_Buffer. Asking for "all" properties of one risks a huge or refused answer,
+    // so for these we name the properties we want. (The history itself is read with ReadRange.)
+    private static readonly BacnetPropertyIds[] LogObjectProps =
+    [
+        BacnetPropertyIds.PROP_OBJECT_IDENTIFIER, BacnetPropertyIds.PROP_OBJECT_NAME, BacnetPropertyIds.PROP_OBJECT_TYPE,
+        BacnetPropertyIds.PROP_DESCRIPTION, BacnetPropertyIds.PROP_ENABLE, BacnetPropertyIds.PROP_LOG_INTERVAL,
+        BacnetPropertyIds.PROP_RECORD_COUNT, BacnetPropertyIds.PROP_TOTAL_RECORD_COUNT, BacnetPropertyIds.PROP_BUFFER_SIZE,
+        BacnetPropertyIds.PROP_STOP_WHEN_FULL, BacnetPropertyIds.PROP_START_TIME, BacnetPropertyIds.PROP_STOP_TIME,
+    ];
+
+    public static bool IsLogObject(BacnetObjectTypes type) =>
+        type is BacnetObjectTypes.OBJECT_TRENDLOG or BacnetObjectTypes.OBJECT_TREND_LOG_MULTIPLE or BacnetObjectTypes.OBJECT_EVENT_LOG;
+
     public async Task<IReadOnlyList<PropertyRow>> ReadAllPropertiesAsync(BacnetObjectId id, CancellationToken ct = default)
     {
         var rows = new List<PropertyRow>();
         try
         {
-            var refs = new List<BacnetPropertyReference>
-                { new((uint)BacnetPropertyIds.PROP_ALL, ASN1.BACNET_ARRAY_ALL) };
+            var refs = IsLogObject(id.type)
+                ? LogObjectProps.Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList()
+                : [new((uint)BacnetPropertyIds.PROP_ALL, ASN1.BACNET_ARRAY_ALL)];
             var results = await client.ReadPropertyMultipleAsync(device.Address, id, refs, cancellationToken: ct);
             foreach (var pv in results.SelectMany(r => r.values))
                 rows.Add(ToRow(id.type, pv.property.propertyIdentifier, pv.value));
@@ -269,7 +283,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             rows.Clear(); // no RPM / no PROP_ALL: read the common ones one by one
         }
 
-        foreach (var p in CommonProps)
+        foreach (var p in IsLogObject(id.type) ? LogObjectProps : CommonProps)
         {
             try
             {

@@ -36,6 +36,9 @@ public sealed class DiscoveryService : IDisposable
     /// <summary>Object-level reads for one discovered device, sharing this service's connection.</summary>
     public Browsing.DeviceBrowser OpenDevice(DiscoveredDevice device) => new(_client, device);
 
+    /// <summary>Read a device's trend logs (settings and recorded history).</summary>
+    public Trends.TrendLogReader OpenTrendLogs(DiscoveredDevice device) => new(_client, device);
+
     /// <summary>Keep a device's points up to date using COV where the device supports it and polling for the rest.</summary>
     public Live.LiveWatcher CreateLiveWatcher(DiscoveredDevice device, IReadOnlyList<Browsing.ObjectSummary> points, Live.LiveOptions options) =>
         new(_client, device, new Browsing.DeviceBrowser(_client, device), points, options);

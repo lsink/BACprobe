@@ -214,6 +214,14 @@
               </DataGrid.Columns>
             </DataGrid>
             <StackPanel Grid.Row="2" Margin="0,8,0,0"
+                        Visibility="{Binding IsTrendSelected, Converter={StaticResource BoolToVis}}">
+              <TextBlock Text="Trend log" FontWeight="SemiBold" />
+              <TextBlock Text="The controller records this point's history on its own. Open it to see a chart, the recorded values, and to save them to Excel."
+                         TextWrapping="Wrap" Opacity="0.8" Margin="0,4,0,0" />
+              <Button Content="View trend..." Padding="16,4" Margin="0,8,0,0" HorizontalAlignment="Left"
+                      Command="{Binding ViewTrendCommand}" AutomationProperties.Name="View trend" />
+            </StackPanel>
+            <StackPanel Grid.Row="2" Margin="0,8,0,0"
                         Visibility="{Binding CanWriteSelected, Converter={StaticResource BoolToVis}}">
               <TextBlock Text="Override this point" FontWeight="SemiBold" />
               <DockPanel Margin="0,6,0,0">

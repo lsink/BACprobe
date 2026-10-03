@@ -15,6 +15,7 @@ It has not yet been run against real controllers. Expect rough edges, and please
   properties and object types are shown as "vendor-specific" with raw values, never hidden.
 - **Live values** - switch on "Live values" and the point list keeps itself up to date, so you can watch a damper move, see a write take effect, or catch someone else's override appear. It asks the device to push changes (COV) and polls only the points or devices that refuse; changed values flash blue. Subscriptions are renewed automatically, and a slow safety poll catches anything missed.
 - **Override indicator** - points held at manual-operator priority (8) or higher show in orange with the priority, whoever set the override.
+- **Trend logs** - select a trend log and open it to see its recorded history as a chart (with hover read-out) and a table, for the latest 100, 500, 2000 or all records. Shows what the log records, how often, and whether it is switched off or has overwritten old data. Save the records to Excel (real dates and numbers, so Excel can chart them) or CSV.
 - **Safe writes** - a confirmation in plain English that names the priority (8 = Manual Operator is the default),
   a write log, and a prompt before you disconnect that lists the overrides you left in place and offers to release them.
 - **BBMD foreign-device registration** - reach devices on other subnets; renews automatically and explains refusals and timeouts.
@@ -26,7 +27,7 @@ Fully local: no cloud calls, no telemetry.
 
 ## Not yet
 - MS/TP (needs an FTDI USB-RS485 adapter; planned for a later phase)
-- Trend logs, schedules
+- Schedules, Trend Log Multiple, event logs
 - Writes to properties other than Present Value
 - EDE state-text, limit and COV columns (left empty); the EDE layout has not been checked against a real EDE consumer
 
@@ -54,6 +55,7 @@ dotnet run --project src/BACprobe.Cli -- discover
 | `adapters` / `preflight` | List network adapters; run the pre-flight checks |
 | `discover [--bbmd <ip>]` | Find devices |
 | `objects --device <n>` | List a device's objects with values |
+| `trend --device <n> --object tl:1 [--last 50 \| --all] [--out file.xlsx]` | Show a trend log and save its records |
 | `watch --device <n> [--object ai:1] [--poll]` | Print a line whenever a value or override changes (COV where supported) |
 | `read --device <n> --object ai:1 [--property present-value]` | Read all (or one) property of a point |
 | `write` / `release --device <n> --object ao:1 --value 25 [--priority 8]` | Override a point / give it back (asks to confirm) |
