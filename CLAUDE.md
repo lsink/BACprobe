@@ -38,7 +38,8 @@ Full research and plan: https://claude.ai/code/artifact/9a36dbdb-bbd9-4b84-9254-
 
 ## Phase 1 scope (current): BACnet/IP explorer MVP
 1. Connect wizard with pre-flight checks: adapter up, valid IPv4 (not 169.254), UDP 47808 bindable,
-   name the process holding 47808 (Windows `GetExtendedUdpTable`), warn on virtual adapters and duplicate subnets.
+   name the process holding 47808 (Windows `GetExtendedUdpTable`), warn on virtual adapters and duplicate subnets,
+   and warn when Windows Firewall would drop incoming UDP 47808 (`FirewallInspector` + `PreflightRules.CheckFirewall`; never a Fail).
 2. Discovery: Who-Is (optional instance range), collect I-Am, then enrich each device
    (object-name, vendor-name, model-name, firmware) with ReadPropertyMultiple, falling back to ReadProperty.
 3. Device tree, object list, property read; writes with a plain-English priority picker and a write log.
@@ -82,6 +83,11 @@ Learned the hard way:
   then abort. `DiscoveryService` sets MAX_SEG65. Never ask the device object for PROP_ALL either (it drags in Object_List); `DeviceBrowser` names its properties.
 - After 3 timeouts in a row (`BacnetFailure.MaxTimeoutsInARow`) a device counts as not answering: reads, COV subscribe/renew stop
   instead of waiting out every request. Summary batches fit the device's max APDU when it cannot segment; an abort halves the batch.
+- Windows Firewall: read it BEFORE anything binds 47808. Binding makes Windows show "allow this app?" and add a temporary
+  block rule for the exe while it waits, which looks exactly like a refusal. Rules are per exe path, so every build folder
+  gets its own. Read via late-bound `HNetCfg.FwPolicy2` (indexed properties take ONE profile bit, not the combined mask).
+- Network category: `NetworkListManager` late-bound, but `GetAdapterId` returns a GUID that late binding cannot carry;
+  cast to the `[ComImport]` `INetworkConnection` in `FirewallInspector`. An unidentified network counts as Public.
 - Simulator test aids: `--objects n` (big controller, needs segmentation), `--outage after,seconds` (silent, then back with COV
   subscriptions forgotten, like a restart; its port stays the same, unlike restarting `simulate`).
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).

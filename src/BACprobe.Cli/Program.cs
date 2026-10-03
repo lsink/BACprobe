@@ -167,6 +167,13 @@ internal static partial class Program
         if (devices.Count == 0)
         {
             Console.WriteLine("No devices answered.");
+            var firewall = PreflightRules.CheckFirewall(FirewallInspector.Inspect(adapter)); // read again: a Windows prompt may have been answered since
+            if (firewall.Severity != PreflightSeverity.Pass)
+            {
+                Console.WriteLine($"  Likely cause: Windows Firewall. {firewall.Message}");
+                Console.WriteLine($"  Next step:    {firewall.NextStep} Then run discover again.");
+                return 3;
+            }
             Console.WriteLine("  Likely cause: wrong adapter/subnet, a firewall blocking UDP 47808, or devices on another subnet behind a BBMD.");
             Console.WriteLine("  Next step:    check the adapter with 'bacprobe adapters', allow bacprobe through Windows Firewall, or try a longer --wait.");
             return 3;

@@ -361,16 +361,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         SelectedAdapter = Adapters.FirstOrDefault(a => a.Info.IsUp && !a.Info.IsVirtual);
     }
 
-    partial void OnSelectedAdapterChanged(AdapterChoice? value) => RunPreflight();
+    partial void OnSelectedAdapterChanged(AdapterChoice? value) => _ = RunPreflightAsync();
+
+    // The firewall warning, if pre-flight gave one: "no devices answered" names it as the likely cause.
+    private PreflightResult? _firewallWarning;
 
     [RelayCommand]
-    private void RunPreflight()
+    private async Task RunPreflightAsync()
     {
         Preflight.Clear();
         PreflightPassed = false;
-        if (SelectedAdapter is null) return;
-        var results = Core.Networking.Preflight.Run(SelectedAdapter.Info);
+        _firewallWarning = null;
+        var adapter = SelectedAdapter;
+        if (adapter is null) return;
+        PreflightSummary = "Checking...";
+        // Off the UI thread: reading the firewall rules takes a moment.
+        var results = await Task.Run(() => Core.Networking.Preflight.Run(adapter.Info));
+        if (!ReferenceEquals(adapter, SelectedAdapter)) return; // the tech picked another adapter meanwhile
         foreach (var r in results) Preflight.Add(new PreflightRow(r));
+        _firewallWarning = results.FirstOrDefault(r => r.Check == PreflightRules.FirewallCheckName && r.Severity != PreflightSeverity.Pass);
         PreflightPassed = PreflightRules.CanProceed(results);
 
         // Collapse the list when everything is fine; open it when the tech needs to read something.
@@ -442,8 +451,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var found = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(5));
             if (found.Count == 0)
             {
-                Status = "No devices answered. Likely cause: wrong adapter or subnet, a firewall blocking UDP 47808, " +
-                         "or devices on another subnet behind a BBMD. Next step: try another adapter or allow BACprobe through Windows Firewall.";
+                Status = _firewallWarning is { } fw
+                    ? $"No devices answered. Likely cause: Windows Firewall ({fw.Message}) Next step: {fw.NextStep} Then scan again."
+                    : "No devices answered. Likely cause: wrong adapter or subnet, a firewall blocking UDP 47808, " +
+                      "or devices on another subnet behind a BBMD. Next step: try another adapter or allow BACprobe through Windows Firewall.";
+                if (_firewallWarning is not null) PreflightExpanded = true; // show the firewall details right away
                 return;
             }
             // Show the devices now and fill in names as each one answers: one slow or unreachable device must not hold up the list.

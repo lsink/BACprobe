@@ -12,15 +12,21 @@ public static class PreflightRules
 {
     public const int BacnetPort = 47808;
 
+    /// <param name="firewall">Windows Firewall facts; null skips the firewall check.</param>
     public static IReadOnlyList<PreflightResult> Evaluate(
-        AdapterInfo adapter, IReadOnlyList<AdapterInfo> allAdapters, PortProbe port) =>
-    [
-        CheckAdapterUp(adapter),
-        CheckAddress(adapter),
-        CheckVirtual(adapter),
-        CheckDuplicateSubnet(adapter, allAdapters),
-        CheckPort(port),
-    ];
+        AdapterInfo adapter, IReadOnlyList<AdapterInfo> allAdapters, PortProbe port, FirewallFacts? firewall = null)
+    {
+        List<PreflightResult> results =
+        [
+            CheckAdapterUp(adapter),
+            CheckAddress(adapter),
+            CheckVirtual(adapter),
+            CheckDuplicateSubnet(adapter, allAdapters),
+            CheckPort(port),
+        ];
+        if (firewall is not null) results.Add(CheckFirewall(firewall));
+        return results;
+    }
 
     public static bool CanProceed(IEnumerable<PreflightResult> results) =>
         results.All(r => r.Severity != PreflightSeverity.Fail);
@@ -80,5 +86,66 @@ public static class PreflightRules
                 "Another BACnet program is running on this PC.",
                 "If discovery looks incomplete, close the other program and retry.");
         return new("UDP 47808", PreflightSeverity.Pass, $"Port {BacnetPort} is free.");
+    }
+
+    public const string FirewallCheckName = "Windows Firewall";
+
+    /// <summary>
+    /// Will Windows Firewall let BACnet traffic in? Devices broadcast their I-Am replies and push COV notifications unasked,
+    /// so unlike most programs BACprobe needs incoming UDP 47808, not just replies to what it sent. Never a Fail: a
+    /// third-party firewall or a rule detail BACprobe does not model can change the outcome, so the tech can still scan.
+    /// Windows applies block rules before allow rules, and this follows the same order.
+    /// </summary>
+    public static PreflightResult CheckFirewall(FirewallFacts f, int port = BacnetPort)
+    {
+        if (!f.Readable)
+            return new(FirewallCheckName, PreflightSeverity.Warning, $"Could not read the Windows Firewall settings ({f.ReadError}).",
+                "Windows did not let BACprobe look (a company policy, or another security program has replaced Windows Firewall).",
+                $"If no devices answer, ask IT whether this PC allows incoming UDP {port}.");
+
+        var where = $"{f.ProfileName} networks";
+        // The profile already names the category; only an unidentified network needs saying.
+        var category = f.Category is null ? " Windows has not identified this network, so it treats it as Public." : "";
+        if (!f.FirewallOn)
+            return new(FirewallCheckName, PreflightSeverity.Pass,
+                $"Windows Firewall is off for {where}. (Another security program could still block BACnet.)");
+
+        var program = string.IsNullOrEmpty(f.ProgramPath) ? "BACprobe" : Path.GetFileName(f.ProgramPath);
+        var allowApp = $"Open Windows Security > Firewall & network protection > Allow an app through firewall, find {program} " +
+                       $"and tick {f.ProfileName} (needs an administrator).";
+        var publicTip = f.Profile == FirewallProfiles.Public
+            ? " If this is the building's own network, setting it to Private in Windows network settings also works."
+            : "";
+
+        if (f.BlockAllInbound)
+            return new(FirewallCheckName, PreflightSeverity.Warning,
+                $"Windows Firewall blocks ALL incoming traffic on {where}, whatever the rules say. Devices' replies will not get in.{category}",
+                "\"Block all incoming connections\" is switched on for this network type, often by company policy on Public networks.",
+                "Switch it off for this network type in Windows Security > Firewall & network protection (needs an administrator)." + publicTip);
+
+        var applying = f.Rules.Where(r => FirewallMatch.Applies(r, f.Profile, port, f.ProgramPath)).ToList();
+        if (applying.FirstOrDefault(r => !r.Allow) is { } block)
+            return new(FirewallCheckName, PreflightSeverity.Warning,
+                $"Firewall rule \"{block.Name}\" blocks incoming BACnet (UDP {port}) on {where}.{category}",
+                string.IsNullOrEmpty(block.Application)
+                    ? "Someone added a rule that blocks this port for every program."
+                    : "Windows asked whether this program may use the network and either the answer was Cancel or \"Don't allow\", " +
+                      "or the question is still waiting (look for a Windows Security window, perhaps behind this one).",
+                (string.IsNullOrEmpty(block.Application)
+                    ? $"Ask IT (or an administrator) to remove or disable the rule \"{block.Name}\" in Windows Defender Firewall."
+                    : allowApp) + publicTip);
+
+        if (applying.FirstOrDefault(r => r.Allow) is { } allow)
+            return new(FirewallCheckName, PreflightSeverity.Pass, $"Incoming BACnet is allowed on {where} (rule \"{allow.Name}\").");
+
+        if (f.DefaultInboundAllow)
+            return new(FirewallCheckName, PreflightSeverity.Pass, $"Windows Firewall lets incoming traffic in by default on {where}.");
+
+        return new(FirewallCheckName, PreflightSeverity.Warning,
+            $"No Windows Firewall rule lets BACnet replies in on {where}.{category}",
+            "Windows blocks traffic nobody asked for, and BACnet devices broadcast their replies to Who-Is, so the replies can be dropped " +
+            "even though the request went out.",
+            $"If Windows asks whether {program} may use the network, choose Allow and tick {f.ProfileName}. Otherwise: " + allowApp + $" Or, as administrator: netsh advfirewall firewall add rule name=\"BACnet/IP\" dir=in action=allow protocol=UDP localport={port}" +
+            publicTip);
     }
 }
