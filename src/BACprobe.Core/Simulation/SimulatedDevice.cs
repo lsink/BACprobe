@@ -34,6 +34,7 @@ public sealed class SimulatedDevice : IDisposable
         public DateTime? Expiry { get; set; }
         public string? LastText { get; set; }
         public double? LastNumber { get; set; }
+        public BacnetStatusFlags? LastFlags { get; set; }
     }
 
     private DateTime _silentUntil = DateTime.MinValue;
@@ -293,13 +294,15 @@ public sealed class SimulatedDevice : IDisposable
 
         var text = Convert.ToString(pv[0].Value, CultureInfo.InvariantCulture);
         double? number = pv[0].Value is float f ? f : null;
+        var flags = Model.StatusFlags(sub.Object);
         lock (_subsLock)
         {
-            var changed = force
+            var changed = force || flags != sub.LastFlags // a change of status (fault, alarm, out of service) is reported too
                 || (number is { } n && sub.LastNumber is { } last ? Math.Abs(n - last) >= CovIncrement : text != sub.LastText);
             if (!changed) return;
             sub.LastText = text;
             sub.LastNumber = number;
+            sub.LastFlags = flags;
         }
 
         var remaining = sub.Expiry is { } e ? (uint)Math.Max(0, (e - DateTime.UtcNow).TotalSeconds) : 0;
@@ -309,7 +312,7 @@ public sealed class SimulatedDevice : IDisposable
             new()
             {
                 property = new BacnetPropertyReference((uint)BacnetPropertyIds.PROP_STATUS_FLAGS, ASN1.BACNET_ARRAY_ALL),
-                value = [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt(0, 4))],
+                value = [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt((uint)flags, 4))],
             },
         };
         Log?.Invoke($"[{Model.Instance}] COV {sub.Object} = {text} -> {sub.Subscriber}");

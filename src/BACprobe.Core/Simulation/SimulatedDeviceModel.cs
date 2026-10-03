@@ -21,6 +21,56 @@ public sealed class SimulatedDeviceModel
         public BacnetValue?[]? Priority { get; set; }
         public BacnetValue RelinquishDefault { get; set; }
         public SimTrend? Trend { get; set; }
+        /// <summary>Set by <see cref="SetProblem"/>: the point reports itself in alarm.</summary>
+        public bool InAlarm { get; set; }
+        /// <summary>The value is pinned (a failed sensor reads the same rail value): the drift leaves it alone.</summary>
+        public bool Stuck { get; set; }
+    }
+
+    /// <summary>
+    /// Give a point a problem to find: a fault with its reason (Reliability), an alarm, and/or out of service.
+    /// <paramref name="stuckAt"/> pins an analog value, like a broken sensor reading the bottom of its range.
+    /// </summary>
+    public void SetProblem(BacnetObjectId id, BacnetReliability? reliability = null, bool inAlarm = false, bool outOfService = false,
+        float? stuckAt = null)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(id, out var o)) return;
+            if (reliability is { } r) Set(o, BacnetPropertyIds.PROP_RELIABILITY, Enum((uint)r));
+            o.InAlarm = inAlarm;
+            Set(o, BacnetPropertyIds.PROP_OUT_OF_SERVICE, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, outOfService));
+            if (stuckAt is { } v)
+            {
+                Set(o, BacnetPropertyIds.PROP_PRESENT_VALUE, Real(v));
+                o.Stuck = true;
+            }
+        }
+    }
+
+    /// <summary>The sample device's troubles for <c>simulate --faults</c>: a broken discharge-air sensor, a zone in alarm, and a point left out of service.</summary>
+    public void AddSampleProblems()
+    {
+        SetProblem(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 2), BacnetReliability.RELIABILITY_OPEN_LOOP, stuckAt: -40f);
+        SetProblem(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1), inAlarm: true);
+        SetProblem(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_VALUE, 1), outOfService: true);
+    }
+
+    /// <summary>Status_Flags as the point would report them: alarm as set, fault from Reliability, out of service from its property.</summary>
+    public BacnetStatusFlags StatusFlags(BacnetObjectId id)
+    {
+        lock (_lock) return Resolve(id, out var o) ? FlagsOf(o) : 0;
+    }
+
+    private static BacnetStatusFlags FlagsOf(SimObject o)
+    {
+        var flags = (BacnetStatusFlags)0;
+        if (o.InAlarm) flags |= BacnetStatusFlags.STATUS_FLAG_IN_ALARM;
+        if (o.Props.TryGetValue(BacnetPropertyIds.PROP_RELIABILITY, out var rel) && rel is [{ Value: uint code }] && code != 0)
+            flags |= BacnetStatusFlags.STATUS_FLAG_FAULT;
+        if (o.Props.TryGetValue(BacnetPropertyIds.PROP_OUT_OF_SERVICE, out var oos) && oos is [{ Value: true }])
+            flags |= BacnetStatusFlags.STATUS_FLAG_OUT_OF_SERVICE;
+        return flags;
     }
 
     /// <summary>The recorded history of one trend log, newest at the end.</summary>
@@ -160,7 +210,7 @@ public sealed class SimulatedDeviceModel
         {
             foreach (var o in _objects.Values)
             {
-                if (o.Id.type != BacnetObjectTypes.OBJECT_ANALOG_INPUT) continue;
+                if (o.Id.type != BacnetObjectTypes.OBJECT_ANALOG_INPUT || o.Stuck) continue;
                 if (o.Props.TryGetValue(BacnetPropertyIds.PROP_PRESENT_VALUE, out var pv) && pv is [{ Value: float f }])
                     pv[0] = Real((float)Math.Round(Math.Clamp(f + (rng.NextDouble() - 0.5) * 0.6, 40, 100), 1));
             }
@@ -344,8 +394,12 @@ public sealed class SimulatedDeviceModel
     {
         var list = o.Props.Keys.ToList();
         if (ReferenceEquals(o, _device)) list.Add(BacnetPropertyIds.PROP_OBJECT_LIST);
+        if (HasStatus(o)) list.Add(BacnetPropertyIds.PROP_STATUS_FLAGS);
         return list;
     }
+
+    /// <summary>Points (anything with a present value, other than the device) carry Status_Flags.</summary>
+    private bool HasStatus(SimObject o) => !ReferenceEquals(o, _device) && o.Trend is null && o.Props.ContainsKey(BacnetPropertyIds.PROP_PRESENT_VALUE);
 
     private List<BacnetValue> ObjectList() =>
         _objects.Keys.OrderBy(k => k.type != BacnetObjectTypes.OBJECT_DEVICE).ThenBy(k => (int)k.type).ThenBy(k => k.instance)
@@ -357,6 +411,8 @@ public sealed class SimulatedDeviceModel
     private List<BacnetValue>? Raw(SimObject o, BacnetPropertyIds p)
     {
         if (p == BacnetPropertyIds.PROP_OBJECT_LIST && ReferenceEquals(o, _device)) return ObjectList();
+        if (p == BacnetPropertyIds.PROP_STATUS_FLAGS && HasStatus(o))
+            return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt((uint)FlagsOf(o), 4))];
         if (o.Trend is { } t)
         {
             if (p == BacnetPropertyIds.PROP_RECORD_COUNT) return [Uint((uint)t.Buffer.Count)];

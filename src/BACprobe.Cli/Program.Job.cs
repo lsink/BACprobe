@@ -86,7 +86,7 @@ internal static partial class Program
             foreach (var o in d.Objects)
             {
                 var s = o.ToSummary();
-                Console.WriteLine($"{BacnetNames.ObjectTypeShort(o.Type),-3} {o.Instance,-4} {s.TypeName,-22} {o.Name ?? "-",-26} {s.ValueText,-14} {o.Description}");
+                Console.WriteLine($"{BacnetNames.ObjectTypeShort(o.Type),-3} {o.Instance,-4} {s.TypeName,-22} {o.Name ?? "-",-26} {s.ValueText,-14} {o.Description}{(s.HasProblem ? $"  [{s.ProblemText}]" : "")}");
             }
         }
         else

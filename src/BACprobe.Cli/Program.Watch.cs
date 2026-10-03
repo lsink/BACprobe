@@ -40,9 +40,10 @@ internal static partial class Program
         var useCov = !opts.ContainsKey("poll");
         Console.WriteLine($"Watching {watched.Count} point(s) on device {device.InstanceId}{(useCov ? " (COV where supported)" : " (polling)")}. Ctrl+C to stop.");
 
-        var last = watched.ToDictionary(p => p.Id, p => (Value: p.ValueText, Override: p.OverrideText));
+        var last = watched.ToDictionary(p => p.Id, p => (Value: p.ValueText, Override: p.OverrideText, Status: p.ProblemText));
         foreach (var p in watched)
-            Console.WriteLine($"  {BacnetNames.ObjectTypeShort(p.Id.type),-3} {p.Id.instance,-3} {p.Name,-22} {p.ValueText}{(p.IsOverridden ? $"   [override {p.OverrideText}]" : "")}");
+            Console.WriteLine($"  {BacnetNames.ObjectTypeShort(p.Id.type),-3} {p.Id.instance,-3} {p.Name,-22} {p.ValueText}" +
+                              $"{(p.IsOverridden ? $"   [override {p.OverrideText}]" : "")}{(p.HasProblem ? $"   [{p.ProblemText}]" : "")}");
 
         var watcher = svc.CreateLiveWatcher(device, watched, new LiveOptions(TimeSpan.FromSeconds(interval), useCov) { CovLifetimeSeconds = (uint)IntOpt(opts, "cov-lifetime", 300) });
         var lastMode = "";
@@ -59,14 +60,15 @@ internal static partial class Program
         };
         watcher.PointChanged += p =>
         {
-            (string Value, string Override) before;
+            (string Value, string Override, string Status) before;
             lock (last) before = last[p.Id];
-            var now = (Value: p.ValueText, Override: p.OverrideText);
+            var now = (Value: p.ValueText, Override: p.OverrideText, Status: p.ProblemText);
             if (now == before) return;
             lock (last) last[p.Id] = now;
             var note = now.Override != before.Override
                 ? (p.IsOverridden ? $"   [override now {p.OverrideText}]" : "   [override released]")
                 : "";
+            if (now.Status != before.Status) note += p.HasProblem ? $"   [now {p.ProblemText}]" : "   [back to normal]";
             var change = before.Value == p.ValueText ? p.ValueText : $"{before.Value} -> {p.ValueText}";
             Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {BacnetNames.ObjectTypeShort(p.Id.type),-3} {p.Id.instance,-3} {p.Name,-22} {change}{note}");
         };

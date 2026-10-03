@@ -15,8 +15,8 @@ internal static partial class Program
         if (opts.TryGetValue("query", out var q) && q is not null) words.Add(q);
         var query = string.Join(' ', words.Select(w => w.Any(char.IsWhiteSpace) && !w.Contains('"') ? $"\"{w}\"" : w));
         if (PointSearch.Tokens(query).Count == 0)
-            throw new ArgumentException("Say what to look for, e.g. 'bacprobe find zone temp'. Add is:overridden to see only overridden points, " +
-                                        "or quote a phrase: \"supply fan\".");
+            throw new ArgumentException("Say what to look for, e.g. 'bacprobe find zone temp', or quote a phrase: \"supply fan\". " +
+                                        "Filters: is:overridden, is:fault, is:alarm, is:oos (out of service), is:problem (any of those three).");
         var max = IntOpt(opts, "max", 50);
         if (max < 1) throw new ArgumentException("--max must be 1 or more.");
 
@@ -51,12 +51,12 @@ internal static partial class Program
         }
 
         Console.WriteLine($"{hits.Count} point(s) match \"{query}\" ({searched} points on {collected.Devices.Count} device(s) searched):");
-        Console.WriteLine($"{"Device",-24} {"Object",-8} {"Name",-28} {"Value",-14} {"Override",-20} Description");
+        Console.WriteLine($"{"Device",-24} {"Object",-8} {"Name",-28} {"Value",-14} {"Override",-20} {"Status",-22} Description");
         foreach (var h in hits.Take(max))
         {
             var p = h.Point;
             Console.WriteLine($"{h.DeviceInstance + " " + Clip(h.DeviceName, 18),-24} {BacnetNames.ObjectTypeShort(p.Id.type) + " " + p.Id.instance,-8} " +
-                              $"{Clip(p.Name ?? "-", 27),-28} {p.ValueText,-14} {p.OverrideText,-20} {p.Description}");
+                              $"{Clip(p.Name ?? "-", 27),-28} {p.ValueText,-14} {p.OverrideText,-20} {Clip(p.ProblemText, 21),-22} {p.Description}");
         }
         if (hits.Count > max) Console.WriteLine($"...and {hits.Count - max} more. Narrow the search, or raise --max.");
         foreach (var f in collected.Failed) Console.WriteLine("  NOT searched: " + f);

@@ -145,9 +145,12 @@ public static class BacnetNames
                 // BACnet counts a trend log's interval in hundredths of a second; 0 means "logs on change".
                 var cs = Convert.ToUInt32(v.Value, CultureInfo.InvariantCulture);
                 return cs == 0 ? "on change" : $"{cs / 100.0:0.##} s";
+            case BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING when property == BacnetPropertyIds.PROP_STATUS_FLAGS && v.Value is BacnetBitString bits:
+                return PointHealth.FlagsText((BacnetStatusFlags)bits.ConvertToInt());
             case BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED:
                 var n = Convert.ToUInt32(v.Value, CultureInfo.InvariantCulture);
                 if (property == BacnetPropertyIds.PROP_UNITS) return UnitsName(n);
+                if (property == BacnetPropertyIds.PROP_RELIABILITY) return n == 0 ? "no fault detected" : PointHealth.ReliabilityName(n);
                 if (property == BacnetPropertyIds.PROP_OBJECT_TYPE) return ObjectTypeName((BacnetObjectTypes)n);
                 if (property is BacnetPropertyIds.PROP_PRESENT_VALUE or BacnetPropertyIds.PROP_RELINQUISH_DEFAULT
                     && objectType is BacnetObjectTypes.OBJECT_BINARY_INPUT or BacnetObjectTypes.OBJECT_BINARY_OUTPUT

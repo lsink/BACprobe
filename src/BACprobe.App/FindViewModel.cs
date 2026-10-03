@@ -17,6 +17,8 @@ public sealed class FindRow(PointHit hit)
     public string Value => hit.Point.ValueText;
     public string Override => hit.Point.OverrideText;
     public string Description => hit.Point.Description ?? "";
+    public string Status => hit.Point.ProblemText;
+    public string StatusTooltip => hit.Point.ProblemTooltip;
 }
 
 /// <summary>The Find window: type words, see matching points across every device read so far, jump to one.</summary>

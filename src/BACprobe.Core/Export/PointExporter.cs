@@ -20,7 +20,7 @@ public static class PointExporter
     private static readonly string[] CsvHeader =
     [
         "Device Instance", "Device Name", "Device Address", "Object Type", "Object Instance", "Object Name",
-        "Description", "Present Value", "Units", "Writable (by type)",
+        "Description", "Present Value", "Units", "Writable (by type)", "Status",
     ];
 
     public static ExportFormat? FormatFromPath(string path) => Path.GetExtension(path).ToLowerInvariant() switch
@@ -88,6 +88,7 @@ public static class PointExporter
         BacnetNames.ObjectTypeName(o.Id.type), o.Id.instance, text(o.Name),
         text(o.Description), text(o.DisplayValue), text(o.Units),
         IsUsuallyWritable(o.Id.type) ? "Yes" : "No",
+        o.ProblemText, // "Fault: open loop", "Out of service"; empty for a healthy point (BACprobe's own words, not device text)
     ];
 
     /// <summary>

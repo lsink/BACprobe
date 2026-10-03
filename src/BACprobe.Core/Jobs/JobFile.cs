@@ -13,7 +13,7 @@ namespace BACprobe.Core.Jobs;
 /// </summary>
 public static class JobFile
 {
-    public const int SchemaVersion = 3; // 2 added objects.priority_slots, 3 objects.state_texts; older files still load
+    public const int SchemaVersion = 4; // 2 added objects.priority_slots, 3 state_texts, 4 status_flags + reliability; older files still load
     public const string Extension = ".bacprobe";
     private const string AppMarker = "BACprobe";
 
@@ -28,6 +28,7 @@ public static class JobFile
             device_instance INTEGER NOT NULL REFERENCES devices(instance) ON DELETE CASCADE,
             object_type INTEGER NOT NULL, object_instance INTEGER NOT NULL,
             name TEXT, description TEXT, present_value TEXT, units TEXT, units_code INTEGER, priority_slots TEXT, state_texts TEXT,
+            status_flags INTEGER, reliability INTEGER,
             PRIMARY KEY (device_instance, object_type, object_instance));
         CREATE TABLE write_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, device_instance INTEGER NOT NULL,
@@ -146,16 +147,18 @@ public static class JobFile
         using var cmd = c.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO objects(device_instance, object_type, object_instance, name, description, present_value, units, units_code, priority_slots, state_texts)
-            VALUES ($d, $t, $i, $n, $de, $pv, $u, $uc, $ps, $st)
+            INSERT INTO objects(device_instance, object_type, object_instance, name, description, present_value, units, units_code, priority_slots, state_texts,
+                                status_flags, reliability)
+            VALUES ($d, $t, $i, $n, $de, $pv, $u, $uc, $ps, $st, $sf, $rel)
             """;
-        string[] names = ["$d", "$t", "$i", "$n", "$de", "$pv", "$u", "$uc", "$ps", "$st"];
+        string[] names = ["$d", "$t", "$i", "$n", "$de", "$pv", "$u", "$uc", "$ps", "$st", "$sf", "$rel"];
         var p = names.Select(n => cmd.Parameters.Add(new SqliteParameter { ParameterName = n })).ToArray(); // type follows each value
         cmd.Prepare();
         foreach (var o in d.Objects)
         {
             object?[] values = [(long)d.Instance, (int)o.Type, (long)o.Instance, o.Name, o.Description, o.PresentValue, o.Units,
-                o.UnitsCode is { } uc ? (long)uc : null, SlotsToJson(o.Slots), NamesToJson(o.StateNames)];
+                o.UnitsCode is { } uc ? (long)uc : null, SlotsToJson(o.Slots), NamesToJson(o.StateNames),
+                o.StatusFlags is { } sf ? (long)sf : null, o.Reliability is { } rel ? (long)rel : null];
             for (var i = 0; i < p.Length; i++) p[i].Value = values[i] ?? DBNull.Value; // always parameters: names come off the network
             cmd.ExecuteNonQuery();
         }
@@ -184,11 +187,13 @@ public static class JobFile
         var objects = new Dictionary<long, List<SavedObject>>();
         using (var cmd = c.CreateCommand())
         {
-            // Version 1 files have no priority_slots column, versions 1 and 2 no state_texts.
+            // Version 1 files have no priority_slots column, versions 1 and 2 no state_texts, 1 to 3 no status.
             var slotsColumn = version >= 2 ? "priority_slots" : "NULL";
             var namesColumn = version >= 3 ? "state_texts" : "NULL";
+            var statusColumns = version >= 4 ? "status_flags, reliability" : "NULL, NULL";
             cmd.CommandText = $"""
-                SELECT device_instance, object_type, object_instance, name, description, present_value, units, units_code, {slotsColumn}, {namesColumn}
+                SELECT device_instance, object_type, object_instance, name, description, present_value, units, units_code, {slotsColumn}, {namesColumn},
+                       {statusColumns}
                 FROM objects ORDER BY device_instance, object_type, object_instance
                 """;
             using var r = cmd.ExecuteReader();
@@ -197,7 +202,9 @@ public static class JobFile
                 var dev = r.GetInt64(0);
                 if (!objects.TryGetValue(dev, out var list)) objects[dev] = list = [];
                 list.Add(new SavedObject((BacnetObjectTypes)r.GetInt32(1), (uint)r.GetInt64(2), Str(r, 3), Str(r, 4), Str(r, 5),
-                    Str(r, 6), r.IsDBNull(7) ? null : (uint)r.GetInt64(7), SlotsFromJson(Str(r, 8)), NamesFromJson(Str(r, 9))));
+                    Str(r, 6), r.IsDBNull(7) ? null : (uint)r.GetInt64(7), SlotsFromJson(Str(r, 8)), NamesFromJson(Str(r, 9)),
+                    r.IsDBNull(10) ? null : (BacnetStatusFlags)(r.GetInt64(10) & 0xF), // the four standard flags only: the file may come from anywhere
+                    r.IsDBNull(11) ? null : (uint)r.GetInt64(11)));
             }
         }
 

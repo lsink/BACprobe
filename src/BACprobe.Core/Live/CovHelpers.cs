@@ -31,6 +31,12 @@ public sealed record CovRefusal(string Reason, bool StopTrying)
 
 public static class CovNotification
 {
+    /// <summary>The Status_Flags carried in a COV notification (standard for points), or null if it has none.</summary>
+    public static BacnetStatusFlags? StatusFlags(IEnumerable<BacnetPropertyValue> values) =>
+        values.FirstOrDefault(v => v.property.propertyIdentifier == (uint)BacnetPropertyIds.PROP_STATUS_FLAGS) is { value: { } v }
+            ? PointHealth.FlagsFrom(v)
+            : null;
+
     /// <summary>The Present Value carried in a COV notification, formatted like everywhere else; null if the notification has none.</summary>
     public static string? PresentValueText(BacnetObjectTypes type, IEnumerable<BacnetPropertyValue> values)
     {

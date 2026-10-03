@@ -72,6 +72,11 @@ public sealed class ObjectRow(ObjectSummary s) : ObservableObject
     public bool IsOverridden => _s.IsOverridden;
     public string Override => _s.OverrideText;
     public string OverrideTooltip => _s.OverrideTooltip;
+    public bool HasProblem => _s.HasProblem;
+    /// <summary>"Fault: open loop", "In alarm", "Out of service"; empty for a healthy point.</summary>
+    public string Status => _s.ProblemText;
+    /// <summary>Each problem with its likely cause and next step.</summary>
+    public string StatusTooltip => _s.ProblemTooltip;
 
     private bool _recentlyChanged;
 
@@ -98,6 +103,9 @@ public sealed class ObjectRow(ObjectSummary s) : ObservableObject
         OnPropertyChanged(string.Empty);
     }
 }
+
+/// <summary>One choice in the object list's Show filter; a null test means every point.</summary>
+public sealed record PointFilterChoice(string Label, Func<ObjectSummary, bool>? Test);
 
 /// <summary>What the user chose when asked about overrides they are about to walk away from.</summary>
 public enum OverrideChoice { Release, Leave, GoBack }
@@ -163,6 +171,24 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<DeviceRow> Devices { get; } = [];
     public ObservableCollection<ObjectRow> Objects { get; } = [];
     public ObservableCollection<PropertyRow> Properties { get; } = [];
+
+    // The object list's Show filter: everything, only points with a problem, or only overridden points.
+    public IReadOnlyList<PointFilterChoice> PointFilters { get; } =
+    [
+        new("All points", null),
+        new("Problems (fault, alarm, out of service)", p => p.HasProblem),
+        new("Overridden", p => p.IsOverridden),
+    ];
+
+    [ObservableProperty] private PointFilterChoice? _selectedPointFilter;
+    [ObservableProperty] private string _pointFilterStatus = "";
+
+    partial void OnSelectedPointFilterChanged(PointFilterChoice? value)
+    {
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(Objects);
+        view.Filter = value?.Test is { } test ? o => o is ObjectRow r && test(r.Summary) : null;
+        UpdateOverrideSummary();
+    }
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
@@ -266,7 +292,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (value is not null) WriteValueText = value.Text;
     }
-    [ObservableProperty] private string _overrideSummary = "No overrides in place.";
+    [ObservableProperty] private string _overrideSummary = "No overrides or problems.";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
@@ -358,6 +384,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        _selectedPointFilter = PointFilters[0];
         _log.Added += e => OnUi(() => WriteLogLines.Add(e.Text));
         RefreshAdapters();
     }
@@ -995,10 +1022,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var mine = _overrides.Active.Count;
         var onDevice = Objects.Count(o => o.IsOverridden);
+        var problems = Objects.Count(o => o.HasProblem);
         var parts = new List<string>();
         if (mine > 0) parts.Add($"{mine} override(s) from this session");
         if (onDevice > 0) parts.Add($"{onDevice} point(s) overridden on this device");
-        OverrideSummary = parts.Count == 0 ? "No overrides in place." : string.Join("  |  ", parts);
+        if (problems > 0) parts.Add($"{problems} point(s) with a problem");
+        OverrideSummary = parts.Count == 0 ? "No overrides or problems." : string.Join("  |  ", parts);
+
+        // A point that just went into fault (or got overridden) must join the filtered list, and one that recovered must leave it.
+        if (SelectedPointFilter?.Test is { } test)
+        {
+            System.Windows.Data.CollectionViewSource.GetDefaultView(Objects).Refresh();
+            var shown = Objects.Count(o => test(o.Summary));
+            PointFilterStatus = shown == 0 && Objects.Count > 0 ? $"None of the {Objects.Count} points" : $"{shown} of {Objects.Count}";
+        }
+        else PointFilterStatus = "";
     }
 
     /// <summary>

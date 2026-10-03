@@ -257,6 +257,17 @@ public sealed class JobFileTests : IDisposable
     }
 
     [Fact]
+    public void Point_status_survives_a_save_and_load()
+    {
+        var path = P("status.bacprobe");
+        JobFile.Save(path, Job([Device(1001, "AHU-1",
+            new SavedObject(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 2, "Discharge Temp", null, "-40", null, null,
+                StatusFlags: BacnetStatusFlags.STATUS_FLAG_FAULT, Reliability: (uint)BacnetReliability.RELIABILITY_OPEN_LOOP))]));
+        var back = JobFile.Load(path).Devices[0].Objects[0].ToSummary();
+        Assert.Equal("Fault: open loop", back.ProblemText);
+    }
+
+    [Fact]
     public void Job_from_a_newer_version_asks_for_an_update()
     {
         var path = P("future.bacprobe");

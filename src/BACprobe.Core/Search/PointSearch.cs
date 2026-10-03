@@ -14,8 +14,9 @@ public sealed record PointHit(ExportDevice Device, ObjectSummary Point, int Scor
 /// <summary>
 /// Find points by words across any number of devices. Every word must match somewhere (name, description, type, units,
 /// device name, or value), so "zone temp" finds "Zone Temp" and "Zone Temperature Sensor". A word in the point's name
-/// counts for more than one in its description. Quote a phrase to match it exactly: "supply fan". Add
-/// <c>is:overridden</c> to see only points someone has overridden.
+/// counts for more than one in its description. Quote a phrase to match it exactly: "supply fan". Filters narrow the
+/// results and can be combined: <c>is:overridden</c>, <c>is:fault</c>, <c>is:alarm</c>, <c>is:oos</c> (out of service) and
+/// <c>is:problem</c> (any of fault, alarm or out of service). A filter on its own lists every point that matches it.
 /// </summary>
 public static class PointSearch
 {
@@ -43,17 +44,31 @@ public static class PointSearch
     public static string Normalize(string? s) =>
         string.IsNullOrEmpty(s) ? "" : s.ToLower(CultureInfo.InvariantCulture).Replace('-', ' ').Replace('_', ' ');
 
+    /// <summary>The <c>is:</c> filters, by every spelling a tech is likely to type.</summary>
+    private static readonly Dictionary<string, Func<ObjectSummary, bool>> Filters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["overridden"] = p => p.IsOverridden, ["override"] = p => p.IsOverridden, ["overrides"] = p => p.IsOverridden,
+        ["fault"] = p => p.IsFault, ["faults"] = p => p.IsFault, ["faulted"] = p => p.IsFault,
+        ["alarm"] = p => p.IsInAlarm, ["alarms"] = p => p.IsInAlarm, ["inalarm"] = p => p.IsInAlarm,
+        ["oos"] = p => p.IsOutOfService, ["outofservice"] = p => p.IsOutOfService, ["out-of-service"] = p => p.IsOutOfService,
+        ["problem"] = p => p.HasProblem, ["problems"] = p => p.HasProblem,
+    };
+
+    /// <summary>The filter for one token, e.g. "is:fault"; null if the token is an ordinary word (or an unknown filter).</summary>
+    public static Func<ObjectSummary, bool>? FilterFor(string token) =>
+        token.StartsWith("is:", StringComparison.OrdinalIgnoreCase) && Filters.TryGetValue(token[3..], out var f) ? f : null;
+
     public static IReadOnlyList<PointHit> Search(IEnumerable<ExportDevice> devices, string query, int max = 1000)
     {
         var words = new List<string>();
-        var onlyOverridden = false;
+        var filters = new List<Func<ObjectSummary, bool>>();
         foreach (var t in Tokens(query))
         {
-            if (string.Equals(t, "is:overridden", StringComparison.OrdinalIgnoreCase)) onlyOverridden = true;
+            if (FilterFor(t) is { } f) filters.Add(f);
             else words.Add(Normalize(t).Trim());
         }
         words.RemoveAll(w => w.Length == 0);
-        if (words.Count == 0 && !onlyOverridden) return [];
+        if (words.Count == 0 && filters.Count == 0) return [];
 
         var whole = string.Join(' ', words);
         var hits = new List<PointHit>();
@@ -62,7 +77,7 @@ public static class PointSearch
             var deviceName = Normalize(device.Name);
             foreach (var p in device.Points)
             {
-                if (onlyOverridden && !p.IsOverridden) continue;
+                if (!filters.TrueForAll(f => f(p))) continue;
                 var score = ScoreOne(p, deviceName, words, whole);
                 if (score >= 0) hits.Add(new PointHit(device, p, score));
             }

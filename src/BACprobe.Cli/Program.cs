@@ -15,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -38,7 +38,8 @@ internal static partial class Program
         routers    Ask for routers and list the networks each one says it can reach. 'discover' also prints a network map
                    (which devices are on which network) and flags networks that look wrong.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
-                   Quote a phrase, e.g. "supply fan"; add is:overridden for overridden points only. --job searches a saved job offline.
+                   Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
+                   (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.
         trend      Show a trend log's settings and recorded history (latest 20 records by default); --out saves all of it as CSV or Excel.
         watch      Print a line whenever a point value or override changes. Uses COV where the device supports it (--poll forces polling;
                    --interval is the polling interval, default 2 s). Ctrl+C to stop.
@@ -62,6 +63,7 @@ internal static partial class Program
                    --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
                    --objects n adds n spare points to each device, so its object list needs segmented replies (a big controller).
                    --outage 20,25 makes the first device go silent after 20 s for 25 s and forget its COV subscriptions (a restart).
+                   --faults gives the first device problems to find: AI 2 open loop (reads -40), AI 1 in alarm, BV 1 out of service.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
         """;
@@ -232,6 +234,7 @@ internal static partial class Program
             {
                 var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
                 var model = SimulatedDeviceModel.CreateSample((uint)(first + i), null, stuck: opts.ContainsKey("stuck"), protectedSetpoint: opts.ContainsKey("protected"));
+                if (i == 0 && opts.ContainsKey("faults")) model.AddSampleProblems();
                 for (var k = 1; k <= padding; k++) // a big controller: its object list no longer fits in one packet
                     model.AddAnalogValue((uint)(1000 + k), $"Spare Value {k}", "Padding point", 0, BacnetUnitsId.UNITS_NO_UNITS, commandable: false);
                 var sim = new SimulatedDevice(adapter, model, supportRpm: !legacy, drift: !opts.ContainsKey("still"),

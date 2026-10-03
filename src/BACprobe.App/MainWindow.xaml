@@ -197,8 +197,17 @@
             <ColumnDefinition Width="2*" MinWidth="360" />
           </Grid.ColumnDefinitions>
 
-          <!-- Objects. Points with a manual override (priority 8 or higher) show in orange and say which priority holds them. -->
-          <DataGrid Grid.Column="0" ItemsSource="{Binding Objects}" SelectedItem="{Binding SelectedObject}"
+          <!-- Objects. Points with a manual override (priority 8 or higher) show in orange and say which priority holds them;
+               points in fault, in alarm or out of service say so in red in the Status column. -->
+          <DockPanel Grid.Column="0">
+          <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+            <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <ComboBox ItemsSource="{Binding PointFilters}" SelectedItem="{Binding SelectedPointFilter}" DisplayMemberPath="Label"
+                      MinWidth="260" AutomationProperties.Name="Show which points"
+                      ToolTip="Narrow the list to the points that need attention. Live values keep it up to date." />
+            <TextBlock Text="{Binding PointFilterStatus}" VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.75" />
+          </DockPanel>
+          <DataGrid ItemsSource="{Binding Objects}" SelectedItem="{Binding SelectedObject}"
                     AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
                     HeadersVisibility="Column" GridLinesVisibility="Horizontal">
             <DataGrid.Columns>
@@ -240,10 +249,20 @@
                   </Style>
                 </DataGridTextColumn.ElementStyle>
               </DataGridTextColumn>
+              <DataGridTextColumn Header="Status" Binding="{Binding Status}">
+                <DataGridTextColumn.ElementStyle>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="IndianRed" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Setter Property="ToolTip" Value="{Binding StatusTooltip}" />
+                  </Style>
+                </DataGridTextColumn.ElementStyle>
+              </DataGridTextColumn>
               <DataGridTextColumn Header="Type" Binding="{Binding Type}" />
               <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" />
             </DataGrid.Columns>
           </DataGrid>
+          </DockPanel>
           <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" />
 
           <!-- Actions (trend / override) on top so they are never cut off on a short screen; the properties list takes

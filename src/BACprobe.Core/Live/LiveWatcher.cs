@@ -97,7 +97,7 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
                 cov.Notified += (id, values) =>
                 {
                     if (!byId.TryGetValue(id, out var s)) return;
-                    if (s.ApplyLive(CovNotification.PresentValueText(id.type, values), null)) Changed(s);
+                    if (s.ApplyLive(CovNotification.PresentValueText(id.type, values), null, CovNotification.StatusFlags(values))) Changed(s);
                     // A commandable point's priority array is not in the notification: fetch it so overrides show up too.
                     if (PriorityArrayInfo.MayHavePriorityArray(id.type)) pending.Writer.TryWrite(s);
                     Publish();

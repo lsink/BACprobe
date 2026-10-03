@@ -82,6 +82,8 @@ State text: `Browsing/StateText` (pure) labels multi-state values with State_Tex
 
 Live trend (temporary): `Trends/LiveTrend` keeps one point's samples in memory (PC clock, capped at a day of 1 s samples, "no answer" gaps recorded); `LiveTrendSampler` reads through its own copy of the point via `RefreshValuesAsync`, so it never touches the main window's summaries. App: "Trend live..." next to the properties heading opens `LiveTrendWindow` (one point per window, interval 1-60 s, pause, clear, export with `pcClock: true`). Polling only, no COV. Closing the window stops the requests and discards the samples.
 
+Problem points: `Browsing/PointHealth` (pure) decodes Status_Flags (`BacnetBitString.ConvertToInt()` gives `BacnetStatusFlags`) and Reliability, and words each problem with a likely cause and next step. Summaries and live polls read Status_Flags (COV notifications carry it too); Reliability is read only for points in fault (`FillReliabilityAsync`; 0 = asked, no reason given). `ObjectSummary.HasProblem`/`ProblemText`/`ProblemTooltip`. Find filters `is:fault|alarm|oos|problem|overridden` (combinable, plurals accepted). App: Status column, Show filter above the object list (re-applied on live changes), footer counts problems. Export: Status column. Job files schema 4 (`status_flags`, `reliability`). Simulator `--faults`: AI 2 open loop at -40, AI 1 in alarm, BV 1 out of service.
+
 Learned the hard way:
 - `BacnetClient.MaxSegments` defaults to MAX_SEG0 ("send me nothing bigger than one packet"): big object lists and PROP_ALL
   then abort. `DiscoveryService` sets MAX_SEG65. Never ask the device object for PROP_ALL either (it drags in Object_List); `DeviceBrowser` names its properties.

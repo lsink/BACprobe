@@ -44,13 +44,39 @@ public sealed class ObjectSummary
     /// <summary>All occupied slots, for a tooltip.</summary>
     public string OverrideTooltip =>
         PrioritySlots.Count == 0 ? "" : "Priority array: " + string.Join("; ", PrioritySlots.Select(SlotText));
+
+    /// <summary>Status_Flags as last read; null if not read (or the object has none).</summary>
+    public BacnetStatusFlags? StatusFlags { get; set; }
+
+    /// <summary>The Reliability code, read only for points in fault (0 = no fault detected); null if not known.</summary>
+    public uint? Reliability { get; set; }
+
+    public bool IsFault => PointHealth.IsFault(StatusFlags, Reliability);
+    public bool IsInAlarm => StatusFlags?.HasFlag(BacnetStatusFlags.STATUS_FLAG_IN_ALARM) == true;
+    public bool IsOutOfService => StatusFlags?.HasFlag(BacnetStatusFlags.STATUS_FLAG_OUT_OF_SERVICE) == true;
+
+    /// <summary>In fault, in alarm or out of service: something a tech should look at.</summary>
+    public bool HasProblem => IsFault || IsInAlarm || IsOutOfService;
+
+    /// <summary>For the Status column: "Fault: open loop; Out of service". Empty for a healthy point.</summary>
+    public string ProblemText => PointHealth.Summary(StatusFlags, Reliability);
+
+    /// <summary>Each problem with its likely cause and next step, for a tooltip.</summary>
+    public string ProblemTooltip => PointHealth.Explanation(StatusFlags, Reliability);
+
     /// <summary>
     /// Store freshly read live fields. Returns true only if something the user can see changed,
     /// so a refresh that finds the same values does not make the screen flicker.
     /// </summary>
-    public bool ApplyLive(string? presentValue, IReadOnlyList<PrioritySlot>? slots)
+    public bool ApplyLive(string? presentValue, IReadOnlyList<PrioritySlot>? slots, BacnetStatusFlags? flags = null)
     {
         var changed = false;
+        if (flags is { } f && f != StatusFlags)
+        {
+            StatusFlags = f;
+            if (!f.HasFlag(BacnetStatusFlags.STATUS_FLAG_FAULT)) Reliability = null; // the fault cleared, so its reason no longer applies
+            changed = true;
+        }
         if (presentValue is not null && presentValue != PresentValue)
         {
             PresentValue = presentValue;
@@ -76,6 +102,8 @@ public sealed class ObjectSummary
         Units = fresh.Units ?? Units;
         UnitsCode = fresh.UnitsCode ?? UnitsCode;
         StateNames = fresh.StateNames ?? StateNames;
+        StatusFlags = fresh.StatusFlags ?? StatusFlags;
+        Reliability = fresh.StatusFlags is null ? Reliability : fresh.Reliability;
         PrioritySlots = fresh.PrioritySlots;
     }
 
@@ -101,10 +129,14 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_UNITS,
     ];
 
-    /// <summary>The four basics for every object, plus the priority array for points that can be commanded and the state names of binary and multi-state points.</summary>
+    /// <summary>
+    /// The four basics for every object, plus Status_Flags for points with a live value, the priority array for points that
+    /// can be commanded, and the state names of binary and multi-state points.
+    /// </summary>
     private static BacnetPropertyIds[] SummaryPropsFor(BacnetObjectTypes type) =>
     [
         .. SummaryProps,
+        .. BacnetNames.HasLivePresentValue(type) ? [BacnetPropertyIds.PROP_STATUS_FLAGS] : Array.Empty<BacnetPropertyIds>(),
         .. PriorityArrayInfo.MayHavePriorityArray(type) ? [BacnetPropertyIds.PROP_PRIORITY_ARRAY] : Array.Empty<BacnetPropertyIds>(),
         .. StateText.NameProperties(type),
     ];
@@ -116,7 +148,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_UNITS, BacnetPropertyIds.PROP_STATUS_FLAGS,
         BacnetPropertyIds.PROP_OUT_OF_SERVICE, BacnetPropertyIds.PROP_PRIORITY_ARRAY, BacnetPropertyIds.PROP_RELINQUISH_DEFAULT,
         BacnetPropertyIds.PROP_INACTIVE_TEXT, BacnetPropertyIds.PROP_ACTIVE_TEXT, BacnetPropertyIds.PROP_NUMBER_OF_STATES,
-        BacnetPropertyIds.PROP_STATE_TEXT,
+        BacnetPropertyIds.PROP_STATE_TEXT, BacnetPropertyIds.PROP_RELIABILITY,
     ];
 
     private BacnetObjectId DeviceObject => new(BacnetObjectTypes.OBJECT_DEVICE, device.InstanceId);
@@ -226,6 +258,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             next += batch.Length;
             progress?.Report(next);
         }
+        await FillReliabilityAsync(summaries, ct);
         return summaries;
     }
 
@@ -254,7 +287,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         foreach (var batch in live.Chunk(BatchSizeFor(device.MaxApdu, device.Segmentation)))
         {
             ct.ThrowIfCancellationRequested();
-            var seen = new Dictionary<BacnetObjectId, (string? Value, IReadOnlyList<PrioritySlot>? Slots)>();
+            var seen = new Dictionary<BacnetObjectId, (string? Value, IReadOnlyList<PrioritySlot>? Slots, BacnetStatusFlags? Flags)>();
 
             void Collect(BacnetObjectId id, BacnetPropertyIds prop, IList<BacnetValue>? values)
             {
@@ -262,6 +295,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
                 seen.TryGetValue(id, out var cur);
                 if (prop == BacnetPropertyIds.PROP_PRESENT_VALUE) cur.Value = BacnetNames.FormatValues(id.type, prop, values);
                 else if (prop == BacnetPropertyIds.PROP_PRIORITY_ARRAY) cur.Slots = PriorityArrayInfo.Occupied(id.type, values);
+                else if (prop == BacnetPropertyIds.PROP_STATUS_FLAGS) cur.Flags = PointHealth.FlagsFrom(values);
                 seen[id] = cur;
             }
 
@@ -316,9 +350,13 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             }
 
             foreach (var (id, got) in seen)
-                if (byId.TryGetValue(id, out var target) && target.ApplyLive(got.Value, got.Slots)) changed.Add(target);
+                if (byId.TryGetValue(id, out var target) && target.ApplyLive(got.Value, got.Slots, got.Flags)) changed.Add(target);
             if (silent) break;
         }
+
+        // A point that has just gone into fault: find out why (Reliability is not polled, to keep requests down).
+        foreach (var s in await FillReliabilityAsync(live, ct))
+            if (!changed.Contains(s)) changed.Add(s);
 
         if (reads == 0 && lastError is not null) throw lastError;
         return changed;
@@ -326,8 +364,34 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
 
     private static BacnetPropertyIds[] LiveProps(BacnetObjectTypes type) =>
         PriorityArrayInfo.MayHavePriorityArray(type)
-            ? [BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_PRIORITY_ARRAY]
-            : [BacnetPropertyIds.PROP_PRESENT_VALUE];
+            ? [BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_PRIORITY_ARRAY, BacnetPropertyIds.PROP_STATUS_FLAGS]
+            : [BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_STATUS_FLAGS];
+
+    /// <summary>
+    /// Read Reliability for points in fault whose reason is not known yet, so the Status column can say "open loop" rather
+    /// than just "fault". Faults are few, so this is a handful of reads at most. Returns the points that gained a reason.
+    /// </summary>
+    private async Task<List<ObjectSummary>> FillReliabilityAsync(IEnumerable<ObjectSummary> points, CancellationToken ct)
+    {
+        var filled = new List<ObjectSummary>();
+        foreach (var s in points.Where(p => p.IsFault && p.Reliability is null).ToList())
+        {
+            try
+            {
+                var code = PointHealth.ReliabilityFrom(await client.ReadPropertyAsync(device.Address, s.Id, BacnetPropertyIds.PROP_RELIABILITY,
+                    cancellationToken: ct));
+                if (code is null) continue;
+                s.Reliability = code;
+                filled.Add(s);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                if (BacnetFailure.IsTimeout(ex)) break; // not answering: the fault still shows, just without its reason
+                s.Reliability = 0; // the device has no reason to give: remember that, so live polls do not keep asking
+            }
+        }
+        return filled;
+    }
 
     private static void ApplySummary(ObjectSummary s, BacnetPropertyIds prop, IList<BacnetValue>? values)
     {
@@ -341,6 +405,12 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             case BacnetPropertyIds.PROP_PRESENT_VALUE: s.PresentValue = text; break;
             case BacnetPropertyIds.PROP_PRIORITY_ARRAY:
                 s.PrioritySlots = PriorityArrayInfo.Occupied(s.Id.type, values);
+                break;
+            case BacnetPropertyIds.PROP_STATUS_FLAGS:
+                s.StatusFlags = PointHealth.FlagsFrom(values);
+                break;
+            case BacnetPropertyIds.PROP_RELIABILITY:
+                s.Reliability = PointHealth.ReliabilityFrom(values);
                 break;
             case BacnetPropertyIds.PROP_UNITS:
                 s.Units = text;
