@@ -23,6 +23,19 @@ public static partial class WriteExplainer
 
     private static bool Has(string message, string text) => message.Contains(text, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// After a failed write: could it have happened anyway? Only a timeout leaves that open (a refusal is a definite no).
+    /// If the point could not be checked we assume it may have, so the tech is offered a release before leaving;
+    /// otherwise it may have if the slot we wrote to is now occupied.
+    /// </summary>
+    public static bool MayHaveLanded(WriteRequest req, bool timedOut, PointProbe? probe)
+    {
+        if (req.IsRelease || !timedOut) return false;
+        if (probe is not { Reachable: true }) return true;
+        if (probe.HasPriorityArray == false) return false;
+        return probe.Slots.Any(s => s.Priority == req.Priority);
+    }
+
     // ---------- the write was refused ----------
 
     /// <summary>Explain a refused write. <paramref name="probe"/> may be null or unreachable; the explanation says what it could not check.</summary>

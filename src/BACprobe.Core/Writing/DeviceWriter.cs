@@ -65,6 +65,11 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
                 probe = await new PointProber(client, request.Device).ProbeAsync(request.Point, limit.Token);
             }
             catch (Exception) { /* the explanation says it could not check */ }
+
+            // A timed-out write may still have landed: track it, so leaving offers to release it.
+            if (WriteExplainer.MayHaveLanded(request, WriteErrors.IsTimeout(ex), probe))
+                tracker.Record(new TrackedOverride(request.Device, request.DeviceName, request.Point, request.ObjectName,
+                    request.Priority, request.ValueText, Unconfirmed: true));
             return new WriteOutcome(false, text.Full, WriteExplainer.ExplainFailure(request, ex.Message, probe));
         }
     }
@@ -114,13 +119,16 @@ public sealed record WriteErrorText(string Summary, string Cause, string NextSte
 
 public static class WriteErrors
 {
+    public static bool IsTimeout(Exception ex) =>
+        ex is TimeoutException || ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Map the library's plain exceptions to a likely cause and a next step.</summary>
     public static WriteErrorText Explain(Exception ex)
     {
         var m = ex.Message;
         bool Has(string s) => m.Contains(s, StringComparison.OrdinalIgnoreCase);
 
-        if (ex is TimeoutException || Has("timeout"))
+        if (IsTimeout(ex))
             return new("The device did not answer the write (timeout).",
                 "Network drop, a busy controller, or a router dropping the request. The write may or may not have happened.",
                 "Read the point again to see its real state before retrying.");

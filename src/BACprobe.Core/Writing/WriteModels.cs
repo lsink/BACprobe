@@ -191,11 +191,14 @@ public sealed class WriteLog(string? filePath = null)
     }
 }
 
+/// <param name="Unconfirmed">The write timed out, so it may or may not have happened. Still offered for release.</param>
 public sealed record TrackedOverride(DiscoveredDevice Device, string DeviceName, BacnetObjectId Point, string ObjectName,
-    int Priority, string ValueText)
+    int Priority, string ValueText, bool Unconfirmed = false)
 {
     public string Description =>
-        $"{ObjectName} ({BacnetNames.ObjectLabel(Point)}) on device {Device.InstanceId} \"{DeviceName}\" - {ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)})";
+        $"{ObjectName} ({BacnetNames.ObjectLabel(Point)}) on device {Device.InstanceId} \"{DeviceName}\" - {ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)}){UnconfirmedNote}";
+
+    public string UnconfirmedNote => Unconfirmed ? " (the write timed out; it may have happened)" : "";
 }
 
 /// <summary>Overrides this session has left in place, so they can be offered for release before disconnecting.</summary>

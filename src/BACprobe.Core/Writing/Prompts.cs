@@ -24,7 +24,7 @@ public static class Prompts
         var n = overrides.Count;
         var facts = overrides.Take(MaxRows)
             .Select(o => new ConfirmFact(o.ObjectName,
-                $"{o.DeviceName} (device {o.Device.InstanceId}): {o.ValueText} at priority {o.Priority} ({BacnetNames.PriorityName(o.Priority)})"))
+                $"{o.DeviceName} (device {o.Device.InstanceId}): {o.ValueText} at priority {o.Priority} ({BacnetNames.PriorityName(o.Priority)}){o.UnconfirmedNote}"))
             .ToList();
         if (n > MaxRows) facts.Add(new ConfirmFact("", $"...and {n - MaxRows} more"));
 

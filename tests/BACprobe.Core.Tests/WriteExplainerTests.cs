@@ -196,4 +196,33 @@ public class WriteExplainerTests
         Assert.Contains("Next step:", c.Body);
         Assert.Equal("Write had no effect", c.Title);
     }
+
+    [Fact]
+    public void A_refused_write_never_counts_as_landed()
+    {
+        Assert.False(WriteExplainer.MayHaveLanded(Request(), timedOut: false, null));
+        Assert.False(WriteExplainer.MayHaveLanded(Request(), timedOut: false, Probe(75, slots: new PrioritySlot(8, "75"))));
+    }
+
+    [Fact]
+    public void A_timed_out_write_that_could_not_be_checked_may_have_landed()
+    {
+        Assert.True(WriteExplainer.MayHaveLanded(Request(), timedOut: true, null));
+        Assert.True(WriteExplainer.MayHaveLanded(Request(), timedOut: true, PointProbe.Unreachable(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT)));
+    }
+
+    [Fact]
+    public void A_timed_out_write_landed_if_its_slot_is_occupied()
+    {
+        Assert.True(WriteExplainer.MayHaveLanded(Request(priority: 8), timedOut: true, Probe(75, slots: new PrioritySlot(8, "75"))));
+        Assert.False(WriteExplainer.MayHaveLanded(Request(priority: 8), timedOut: true, Probe(50, slots: new PrioritySlot(16, "50"))));
+        Assert.False(WriteExplainer.MayHaveLanded(Request(), timedOut: true, Probe(50, array: false)));
+    }
+
+    [Fact]
+    public void A_timed_out_release_is_not_a_new_override()
+    {
+        var release = Request() with { Value = null, ValueText = "release" };
+        Assert.False(WriteExplainer.MayHaveLanded(release, timedOut: true, null));
+    }
 }

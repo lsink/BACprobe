@@ -30,6 +30,14 @@ public class PromptsTests
     }
 
     [Fact]
+    public void A_timed_out_write_is_listed_as_one_that_may_have_happened()
+    {
+        var o = Override(1003, "SIM-VAV-1003", 1, "Damper Position", 8, "25") with { Unconfirmed = true };
+        var row = Assert.Single(Prompts.OverridesInPlace([o]).Facts);
+        Assert.Equal("SIM-VAV-1003 (device 1003): 25 at priority 8 (Manual Operator) (the write timed out; it may have happened)", row.Value);
+    }
+
+    [Fact]
     public void Several_overrides_use_the_plural_and_list_each_one()
     {
         var p = Prompts.OverridesInPlace(
