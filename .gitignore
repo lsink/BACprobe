@@ -29,3 +29,7 @@ Desktop.ini
 
 ## Manual test screenshots and notes (may show real site data)
 test-results/
+
+## Local agent scratch space and unused icon options (kept on this PC only)
+.claude/
+src/BACprobe.App/Assets/old-icons/
