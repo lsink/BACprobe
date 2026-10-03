@@ -9,7 +9,9 @@ public sealed class DiscoveryService : IDisposable
     private readonly BacnetClient _client;
     private readonly BacnetIpUdpProtocolTransport _transport;
     private readonly ConcurrentDictionary<uint, DiscoveredDevice> _devices = new();
-    private readonly ConcurrentQueue<IAmObservation> _heard = new();
+    // One entry per (device number, address): devices re-announce themselves all day (every Who-Is from a front end),
+    // and keeping each repeat would grow without limit over a long session. Repeats add nothing to the conflict check.
+    private readonly ConcurrentDictionary<(uint Instance, string Address), IAmObservation> _heard = new();
 
     public DiscoveryService(AdapterInfo adapter, int port = PreflightRules.BacnetPort, int timeoutMs = 3000, int retries = 1)
     {
@@ -54,7 +56,8 @@ public sealed class DiscoveryService : IDisposable
         BacnetSegmentations segmentation, ushort vendorId)
     {
         // Keep every reply, not just the first per device number: a second device using the same number would otherwise be invisible.
-        _heard.Enqueue(new IAmObservation(deviceId, AddressInfo.Describe(adr), AddressInfo.NetworkOf(adr), AddressInfo.MacOf(adr), vendorId));
+        var address = AddressInfo.Describe(adr);
+        _heard.TryAdd((deviceId, address), new IAmObservation(deviceId, address, AddressInfo.NetworkOf(adr), AddressInfo.MacOf(adr), vendorId));
         _devices.TryAdd(deviceId, new DiscoveredDevice
         {
             InstanceId = deviceId, Address = adr, MaxApdu = maxApdu, Segmentation = segmentation, VendorId = vendorId,
@@ -86,8 +89,9 @@ public sealed class DiscoveryService : IDisposable
     public NetworkMap BuildNetworkMap(IReadOnlyList<DiscoveredDevice> devices, bool scanWasFiltered = false) =>
         NetworkMapBuilder.Build(devices, Routers, scanWasFiltered);
 
-    /// <summary>Every I-Am heard so far, including repeats and conflicting duplicates.</summary>
-    public IReadOnlyList<IAmObservation> Heard => [.. _heard];
+    /// <summary>Every distinct (device number, address) heard so far, including conflicting duplicates.</summary>
+    public IReadOnlyList<IAmObservation> Heard =>
+        [.. _heard.Values.OrderBy(o => o.Instance).ThenBy(o => o.AddressText, StringComparer.Ordinal)];
 
     /// <summary>Conflicts in what has answered so far: duplicate device numbers, duplicate addresses, unassigned devices.</summary>
     public IReadOnlyList<NetworkFinding> CheckNetwork() => NetworkCheck.Analyze(Heard);
@@ -101,14 +105,19 @@ public sealed class DiscoveryService : IDisposable
         if (BbmdRegistration is { IsRegistered: true } bbmd) bbmd.RemoteWhoIs(low, high); // BBMD forwards it to its other subnets
         try { await Task.Delay(wait, ct); }
         catch (OperationCanceledException) { }
-        return _devices.Values.OrderBy(d => d.InstanceId).ToList();
+        // Devices also announce themselves unasked (at power-up, or answering another tool's Who-Is): keep to the range asked for.
+        return _devices.Values.Where(d => InRange(d.InstanceId, low, high)).OrderBy(d => d.InstanceId).ToList();
     }
+
+    /// <summary>True when a device number falls in a Who-Is range; -1 means no limit on that side.</summary>
+    public static bool InRange(uint instance, int low, int high) =>
+        (low < 0 || instance >= (uint)low) && (high < 0 || instance <= (uint)high);
 
     /// <summary>Read name/vendor/model/firmware. ReadPropertyMultiple first, per-property ReadProperty as fallback.</summary>
     public async Task EnrichAsync(IEnumerable<DiscoveredDevice> devices, int parallelism = 8, CancellationToken ct = default)
     {
         await Parallel.ForEachAsync(devices, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
-            async (d, _) => await EnrichOneAsync(d));
+            async (d, token) => await EnrichOneAsync(d, token));
     }
 
     private static readonly BacnetPropertyIds[] Props =
@@ -117,29 +126,34 @@ public sealed class DiscoveryService : IDisposable
         BacnetPropertyIds.PROP_MODEL_NAME, BacnetPropertyIds.PROP_FIRMWARE_REVISION,
     ];
 
-    private async Task EnrichOneAsync(DiscoveredDevice d)
+    private async Task EnrichOneAsync(DiscoveredDevice d, CancellationToken ct)
     {
         var oid = new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, d.InstanceId);
+        string? lastError = null;
         try
         {
             var refs = Props.Select(p => new BacnetPropertyReference((uint)p, System.IO.BACnet.Serialize.ASN1.BACNET_ARRAY_ALL)).ToList();
-            var result = await _client.ReadPropertyMultipleAsync(d.Address, oid, refs);
+            var result = await _client.ReadPropertyMultipleAsync(d.Address, oid, refs, cancellationToken: ct);
             foreach (var pv in result.SelectMany(r => r.values))
                 Apply(d, (BacnetPropertyIds)pv.property.propertyIdentifier, pv.value?.FirstOrDefault());
             return;
         }
-        catch (Exception) { /* device may not support RPM; fall through to per-property reads */ }
-
-        string? lastError = null;
-        foreach (var p in Props)
+        catch (Exception ex) when (!ct.IsCancellationRequested && BacnetFailure.IsTimeout(ex))
         {
-            try
-            {
-                var values = await _client.ReadPropertyAsync(d.Address, oid, p);
-                Apply(d, p, values.FirstOrDefault());
-            }
-            catch (Exception ex) { lastError = ex.Message; }
+            lastError = ex.Message; // not answering at all: four more reads would only wait out four more timeouts
         }
+        catch (Exception) when (!ct.IsCancellationRequested) { /* device may not support RPM; fall through to per-property reads */ }
+
+        if (lastError is null)
+            foreach (var p in Props)
+            {
+                try
+                {
+                    var values = await _client.ReadPropertyAsync(d.Address, oid, p, cancellationToken: ct);
+                    Apply(d, p, values.FirstOrDefault());
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested) { lastError = ex.Message; }
+            }
         if (d.ObjectName is null && lastError is not null)
             d.EnrichError = $"Could not read device properties ({lastError}). " +
                             "The device may be busy, or reachable only through a router that is dropping the request; try again.";

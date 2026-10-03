@@ -166,4 +166,16 @@ public class NetworkCheckTests
     [InlineData("1001:5", "1001:5")]
     public void Host_strips_the_port_only_from_ip_addresses(string text, string expected) =>
         Assert.Equal(expected, NetworkCheck.HostOf(text));
+
+    [Theory]
+    [InlineData(1500u, -1, -1, true)]
+    [InlineData(1500u, 1000, 2000, true)]
+    [InlineData(1000u, 1000, 2000, true)]
+    [InlineData(2000u, 1000, 2000, true)]
+    [InlineData(999u, 1000, 2000, false)]
+    [InlineData(2001u, 1000, 2000, false)]
+    [InlineData(5u, -1, 10, true)]
+    [InlineData(4194303u, 100, -1, true)]
+    public void Who_is_range_includes_both_ends_and_minus_one_means_no_limit(uint instance, int low, int high, bool expected) =>
+        Assert.Equal(expected, BACprobe.Core.Discovery.DiscoveryService.InRange(instance, low, high));
 }
