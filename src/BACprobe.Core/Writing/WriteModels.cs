@@ -165,11 +165,51 @@ public sealed record WriteRequest(
     }
 }
 
+/// <summary>
+/// Turning a point's Out_Of_Service on or off. While it is on, the controller stops updating the point from its
+/// hardware or program, so it is as much an override as a write is, and is held to the same confirmation and log.
+/// </summary>
+public sealed record OutOfServiceRequest(
+    DiscoveredDevice Device,
+    string DeviceName,
+    BacnetObjectId Point,
+    string ObjectName,
+    bool TurnOn,
+    string? CurrentValueText = null)
+{
+    public string ObjectLabel => $"{ObjectName} ({BacnetNames.ObjectLabel(Point)})";
+
+    public string Headline => TurnOn ? $"Take {ObjectName} out of service?" : $"Put {ObjectName} back in service?";
+
+    public IReadOnlyList<ConfirmFact> Facts
+    {
+        get
+        {
+            var facts = new List<ConfirmFact>
+            {
+                new("Device", $"{DeviceName} (device {Device.InstanceId})"),
+                new("Point", ObjectLabel),
+            };
+            if (CurrentValueText is { Length: > 0 }) facts.Add(new("Now", CurrentValueText));
+            facts.Add(new("Out of service", TurnOn ? "On (the point stops following the hardware)" : "Off (the point follows the hardware again)"));
+            return facts;
+        }
+    }
+
+    public string ConfirmLabel => TurnOn ? "Take out of service" : "Put back in service";
+
+    public string Consequence => TurnOn
+        ? "The controller stops updating this point from its input or program, and anything that reads it sees a frozen value. " +
+          "Remember to put it back in service before you leave."
+        : "The point goes back to reading its real input or following its program.";
+}
+
 public sealed record WriteLogEntry(DateTimeOffset Time, uint DeviceInstance, string DeviceName, string Point,
     string Action, int Priority, bool Success, string Result)
 {
+    /// <summary>Priority 0 marks an action that has no priority (Out_Of_Service).</summary>
     public string Text =>
-        $"{Time:yyyy-MM-dd HH:mm:ss} | device {DeviceInstance} \"{DeviceName}\" | {Point} | {Action} @ {Priority} ({BacnetNames.PriorityName(Priority)}) | {(Success ? "OK" : "FAILED")}: {Result}";
+        $"{Time:yyyy-MM-dd HH:mm:ss} | device {DeviceInstance} \"{DeviceName}\" | {Point} | {Action}{(Priority == 0 ? "" : $" @ {Priority} ({BacnetNames.PriorityName(Priority)})")} | {(Success ? "OK" : "FAILED")}: {Result}";
 }
 
 /// <summary>Every write attempt, success or failure. Optionally mirrored to a local text file (no cloud, no telemetry).</summary>
@@ -212,8 +252,16 @@ public sealed class WriteLog(string? filePath = null)
 public sealed record TrackedOverride(DiscoveredDevice Device, string DeviceName, BacnetObjectId Point, string ObjectName,
     int Priority, string ValueText, bool Unconfirmed = false)
 {
+    /// <summary>Priority 0 stands for "out of service": it has no priority slot, but must still be put back.</summary>
+    public const int OutOfServicePriority = 0;
+
+    public bool IsOutOfService => Priority == OutOfServicePriority;
+
+    /// <summary>"22.5 at priority 8 (Manual Operator)", or "out of service" for an Out_Of_Service hold.</summary>
+    public string HeldAs => IsOutOfService ? "out of service" : $"{ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)})";
+
     public string Description =>
-        $"{ObjectName} ({BacnetNames.ObjectLabel(Point)}) on device {Device.InstanceId} \"{DeviceName}\" - {ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)}){UnconfirmedNote}";
+        $"{ObjectName} ({BacnetNames.ObjectLabel(Point)}) on device {Device.InstanceId} \"{DeviceName}\" - {HeldAs}{UnconfirmedNote}";
 
     public string UnconfirmedNote => Unconfirmed ? " (the write timed out; it may have happened)" : "";
 }

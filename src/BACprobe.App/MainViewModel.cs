@@ -344,9 +344,67 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
     private bool _readOnlyMode = ReadOnlySetting.Load();
 
-    partial void OnReadOnlyModeChanged(bool value) => ReadOnlySetting.Save(value);
-
     public bool ShowOverridePanel => CanWriteSelected && !ReadOnlyMode;
+
+    // Out_Of_Service: offered for any point that has the property (inputs too), hidden in read-only mode.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowOutOfServicePanel))]
+    private bool _canSetOutOfService;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(OutOfServiceButtonText))]
+    private bool _isPointOutOfService;
+
+    public bool ShowOutOfServicePanel => CanSetOutOfService && !ReadOnlyMode;
+    public string OutOfServiceButtonText => IsPointOutOfService ? "Put back in service..." : "Take out of service...";
+
+    partial void OnReadOnlyModeChanged(bool value)
+    {
+        ReadOnlySetting.Save(value);
+        OnPropertyChanged(nameof(ShowOutOfServicePanel));
+    }
+
+    /// <summary>Set by the window: confirm taking a point out of, or putting it back in, service.</summary>
+    public Func<OutOfServiceRequest, bool> ConfirmOutOfService { get; set; } = _ => false;
+
+    [RelayCommand]
+    private async Task ToggleOutOfServiceAsync()
+    {
+        var row = SelectedObject;
+        var deviceRow = SelectedDevice;
+        if (_writer is null || _svc is null || row is null || deviceRow is null) return;
+        if (ReadOnlyMode)
+        {
+            Status = "Read-only mode is on, so nothing was changed. Untick Read-only at the top to make changes.";
+            return;
+        }
+
+        var obj = row.Summary;
+        var deviceName = deviceRow.Name == "-" ? $"device {deviceRow.Instance}" : deviceRow.Name;
+        var request = new OutOfServiceRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label,
+            TurnOn: !IsPointOutOfService, obj.ValueText);
+        if (!ConfirmOutOfService(request))
+        {
+            Status = "Cancelled. Nothing was changed.";
+            return;
+        }
+
+        var outcome = await _writer.SetOutOfServiceAsync(request);
+        Status = outcome.Success
+            ? request.TurnOn ? "Out of service. Put it back in service before you leave." : "Back in service."
+            : outcome.Message.Replace("\n", " ");
+        UpdateOverrideSummary();
+
+        try
+        {
+            var fresh = (await _svc.OpenDevice(deviceRow.Device).ReadSummariesAsync([obj.Id]))[0];
+            obj.UpdateFrom(fresh);
+            row.Refresh(obj);
+            UpdateOverrideSummary();
+            await LoadPropertiesAsync(row);
+        }
+        catch (Exception) { Status += " (Could not read the point back; check it before you leave.)"; }
+    }
 
     [ObservableProperty] private DeviceRow? _selectedDevice;
     [ObservableProperty] private ObjectRow? _selectedObject;
@@ -765,6 +823,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         Properties.Clear();
         CanWriteSelected = false;
+        CanSetOutOfService = false;
         if (row is null || SelectedDevice is null || _svc is null)
         {
             PropertiesHeader = row is not null && _svc is null ? "Properties - offline (Scan to read live)" : "Properties";
@@ -779,6 +838,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (!ReferenceEquals(SelectedObject, row)) return; // selection moved on while reading
             foreach (var r in rows) Properties.Add(r);
             CanWriteSelected = rows.Any(r => r.PropertyId == (uint)BacnetPropertyIds.PROP_PRIORITY_ARRAY);
+            IsPointOutOfService = row.Summary.IsOutOfService;
+            CanSetOutOfService = rows.Any(r => r.PropertyId == (uint)BacnetPropertyIds.PROP_OUT_OF_SERVICE);
             if (rows.Count == 0)
                 Status = $"The device returned no properties for {label}. Likely cause: the object was removed. Next step: select the device again.";
         }

@@ -488,6 +488,16 @@ public sealed class SimulatedDeviceModel
                 return new SimError(BacnetErrorClasses.ERROR_CLASS_OBJECT, BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT);
             if (!o.Props.ContainsKey(prop))
                 return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_UNKNOWN_PROPERTY);
+            if (prop == BacnetPropertyIds.PROP_OUT_OF_SERVICE)
+            {
+                if (value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN || value.Value is not bool on)
+                    return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_INVALID_DATA_TYPE);
+                if (_locked.Contains(id))
+                    return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
+                Set(o, prop, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, on));
+                summary = $"set Out_Of_Service to {on}";
+                return null;
+            }
             if (prop != BacnetPropertyIds.PROP_PRESENT_VALUE)
                 return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
 

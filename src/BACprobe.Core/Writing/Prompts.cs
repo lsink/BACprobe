@@ -24,7 +24,7 @@ public static class Prompts
         var n = overrides.Count;
         var facts = overrides.Take(MaxRows)
             .Select(o => new ConfirmFact(o.ObjectName,
-                $"{o.DeviceName} (device {o.Device.InstanceId}): {o.ValueText} at priority {o.Priority} ({BacnetNames.PriorityName(o.Priority)}){o.UnconfirmedNote}"))
+                $"{o.DeviceName} (device {o.Device.InstanceId}): {o.HeldAs}{o.UnconfirmedNote}"))
             .ToList();
         if (n > MaxRows) facts.Add(new ConfirmFact("", $"...and {n - MaxRows} more"));
 
@@ -48,6 +48,9 @@ public static class Prompts
         "Likely cause: the device stopped answering or the network dropped (the write log has the exact reason). " +
         "Next step: go back and try again, or release it from the controller's own tool.",
         "If you continue, those points stay overridden on the device until someone releases them.");
+
+    public static PromptContent ForOutOfService(OutOfServiceRequest r) => new(
+        r.TurnOn ? "Take out of service" : "Put back in service", r.Headline, r.Facts, r.Consequence);
 
     /// <summary>The dialog for a write or release, built from the same pieces as every other prompt.</summary>
     public static PromptContent ForWrite(WriteRequest r) => new(

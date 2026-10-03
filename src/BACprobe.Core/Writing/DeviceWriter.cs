@@ -74,6 +74,40 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         }
     }
 
+    /// <summary>
+    /// Turn Out_Of_Service on or off. Turning it on is tracked like an override, so leaving offers to put the point back.
+    /// Callers must have shown the user the confirmation first.
+    /// </summary>
+    public async Task<WriteOutcome> SetOutOfServiceAsync(OutOfServiceRequest request, CancellationToken ct = default)
+    {
+        var action = request.TurnOn ? "out of service: on" : "out of service: off";
+        var held = new TrackedOverride(request.Device, request.DeviceName, request.Point, request.ObjectName,
+            TrackedOverride.OutOfServicePriority, "out of service");
+        try
+        {
+            await client.WritePropertyAsync(request.Device.Address, request.Point, BacnetPropertyIds.PROP_OUT_OF_SERVICE,
+                [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, request.TurnOn)], cancellationToken: ct);
+
+            if (request.TurnOn) tracker.Record(held);
+            else tracker.Remove(request.Device.InstanceId, request.Point, TrackedOverride.OutOfServicePriority);
+            var msg = request.TurnOn ? "point is out of service" : "point is back in service";
+            LogOutOfService(request, action, true, msg);
+            return new WriteOutcome(true, msg);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            var text = WriteErrors.Explain(ex);
+            LogOutOfService(request, action, false, text.Summary);
+            // A timed-out "on" may still have landed: offer to put the point back when leaving.
+            if (request.TurnOn && WriteErrors.IsTimeout(ex)) tracker.Record(held with { Unconfirmed = true });
+            return new WriteOutcome(false, text.Full);
+        }
+    }
+
+    private void LogOutOfService(OutOfServiceRequest r, string action, bool success, string result) =>
+        log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Device.InstanceId, r.DeviceName, r.ObjectLabel, action,
+            TrackedOverride.OutOfServicePriority, success, result));
+
     /// <summary>Read the point back until it shows the written value, for up to <see cref="VerifyFor"/> (controllers update on their own schedule).</summary>
     private async Task<PointProbe> VerifyAsync(WriteRequest request, CancellationToken ct)
     {
@@ -101,8 +135,9 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         int ok = 0, bad = 0;
         foreach (var o in tracker.Active)
         {
-            var req = new WriteRequest(o.Device, o.DeviceName, o.Point, o.ObjectName, null, "release", o.Priority);
-            var outcome = await ExecuteAsync(req, ct);
+            var outcome = o.IsOutOfService
+                ? await SetOutOfServiceAsync(new OutOfServiceRequest(o.Device, o.DeviceName, o.Point, o.ObjectName, TurnOn: false), ct)
+                : await ExecuteAsync(new WriteRequest(o.Device, o.DeviceName, o.Point, o.ObjectName, null, "release", o.Priority), ct);
             if (outcome.Success) ok++; else bad++;
         }
         return (ok, bad);

@@ -297,6 +297,7 @@
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto" />
               <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
               <RowDefinition Height="*" MinHeight="80" />
             </Grid.RowDefinitions>
             <DockPanel Grid.Row="0" Margin="0,0,0,6">
@@ -305,7 +306,7 @@
                       ToolTip="Open a temporary trend of this point: BACprobe reads it every few seconds and charts it while the window is open. Nothing is saved on the controller." />
               <TextBlock Text="{Binding PropertiesHeader}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
             </DockPanel>
-            <DataGrid Grid.Row="2" ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
+            <DataGrid Grid.Row="3" ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
                       HeadersVisibility="Column" GridLinesVisibility="Horizontal">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="Property" Binding="{Binding Name}" Width="150" />
@@ -347,6 +348,13 @@
                 <Button Content="Release my override" Padding="16,4" Margin="8,0,0,0"
                         Command="{Binding ReleaseSelectedCommand}" />
               </StackPanel>
+            </StackPanel>
+            <!-- Out of service freezes a point (any point that has the property, inputs included): held to the same confirmation and log as a write -->
+            <StackPanel Grid.Row="2" Margin="0,0,0,10" Orientation="Horizontal"
+                        Visibility="{Binding ShowOutOfServicePanel, Converter={StaticResource BoolToVis}}">
+              <Button Content="{Binding OutOfServiceButtonText}" Padding="16,4" Command="{Binding ToggleOutOfServiceCommand}"
+                      AutomationProperties.Name="Out of service"
+                      ToolTip="Out of service tells the controller to stop updating this point from its input or program. Useful for testing; put it back before you leave." />
             </StackPanel>
           </Grid>
         </Grid>

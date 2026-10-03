@@ -33,6 +33,20 @@ public partial class MainWindow : Window
                     return false;
                 }
             };
+            vm.ConfirmOutOfService = request =>
+            {
+                try
+                {
+                    return PromptWindow.Show(this, Prompts.ForOutOfService(request),
+                        [new PromptButton(request.ConfirmLabel), new PromptButton("Cancel", IsCancel: true)]) == 0;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "BACprobe could not show the confirmation, so nothing was changed." + Environment.NewLine + Environment.NewLine + ex.Message,
+                        "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return false;
+                }
+            };
             vm.ShowExplanation = content => PromptWindow.Show(this, content, [new PromptButton("OK", IsCancel: true)]);
             vm.AskOverrides = overrides => PromptWindow.Show(this, Prompts.OverridesInPlace(overrides),
                 overrides.Count == 1
