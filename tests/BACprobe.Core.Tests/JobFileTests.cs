@@ -243,6 +243,20 @@ public sealed class JobFileTests : IDisposable
     }
 
     [Fact]
+    public void State_names_survive_a_save_and_load()
+    {
+        var path = P("states.bacprobe");
+        JobFile.Save(path, Job([Device(1001, "AHU-1",
+            new SavedObject(BacnetObjectTypes.OBJECT_MULTI_STATE_VALUE, 1, "Occupancy Mode", null, "3", null, null, null,
+                ["Occupied", "Unoccupied", "Standby"]),
+            Obj(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1, "Zone Temp", pv: "72"))]));
+        var objects = JobFile.Load(path).Devices[0].Objects;
+        Assert.Equal(["Occupied", "Unoccupied", "Standby"], objects[1].StateNames!); // ordered by type: AI 1 first
+        Assert.Null(objects[0].StateNames);
+        Assert.Equal("Standby (3)", objects[1].ToSummary().ValueText);
+    }
+
+    [Fact]
     public void Job_from_a_newer_version_asks_for_an_update()
     {
         var path = P("future.bacprobe");

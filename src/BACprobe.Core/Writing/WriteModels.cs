@@ -28,7 +28,14 @@ public sealed record PriorityChoice(int Number, string Name, string Hint, bool A
 public static class WriteValueParser
 {
     /// <summary>Turn what the user typed into the right BACnet type for the object.</summary>
-    public static bool TryParse(BacnetObjectTypes type, string text, out BacnetValue value, out string error)
+    public static bool TryParse(BacnetObjectTypes type, string text, out BacnetValue value, out string error) =>
+        TryParse(type, text, null, out value, out error);
+
+    /// <summary>
+    /// As above, also accepting the point's own state names ("Standby", or a binary point's "Open"/"Closed") when the device
+    /// gave them (see <see cref="StateText"/>), and refusing a state number the point does not have.
+    /// </summary>
+    public static bool TryParse(BacnetObjectTypes type, string text, IReadOnlyList<string?>? stateNames, out BacnetValue value, out string error)
     {
         value = default;
         error = "";
@@ -55,7 +62,7 @@ public static class WriteValueParser
                 {
                     "active" or "on" or "1" or "true" or "start" => 1u,
                     "inactive" or "off" or "0" or "false" or "stop" => 0u,
-                    _ => (uint?)null,
+                    _ => StateText.NumberOf(t, stateNames) is { } named ? named - 1 : (uint?)null, // [inactive, active]
                 };
                 if (state is null)
                 {
@@ -66,9 +73,19 @@ public static class WriteValueParser
                 return true;
 
             case BacnetObjectTypes.OBJECT_MULTI_STATE_OUTPUT or BacnetObjectTypes.OBJECT_MULTI_STATE_VALUE or BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT:
-                if (!uint.TryParse(t, NumberStyles.None, CultureInfo.InvariantCulture, out var n) || n < 1)
+                var known = stateNames is { Count: > 0 } ? stateNames.Count : 0;
+                if (!uint.TryParse(t, NumberStyles.None, CultureInfo.InvariantCulture, out var n))
+                    n = StateText.NumberOf(t, stateNames) ?? 0;
+                if (n < 1)
                 {
-                    error = $"'{t}' is not a state number. Multi-state points take 1, 2, 3, ...";
+                    error = known > 0
+                        ? $"'{t}' is not one of this point's states. Use a state name or a number from 1 to {known}."
+                        : $"'{t}' is not a state number. Multi-state points take 1, 2, 3, ...";
+                    return false;
+                }
+                if (known > 0 && n > known)
+                {
+                    error = $"This point has states 1 to {known}, so {n} is not one of them.";
                     return false;
                 }
                 value = new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_UNSIGNED_INT, n);

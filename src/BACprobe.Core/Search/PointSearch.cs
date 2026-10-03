@@ -78,7 +78,7 @@ public static class PointSearch
         var name = Normalize(p.Name);
         var description = Normalize(p.Description);
         var label = Normalize($"{BacnetNames.ObjectLabel(p.Id)} {BacnetNames.ObjectTypeShort(p.Id.type)} {p.Id.instance}");
-        var other = Normalize($"{p.Units} {p.PresentValue}");
+        var other = Normalize($"{p.Units} {p.DisplayValue}"); // "occupied" finds a multi-state point showing "Occupied (2)"
 
         var score = 0;
         foreach (var w in words)

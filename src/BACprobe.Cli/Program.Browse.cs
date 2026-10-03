@@ -24,7 +24,7 @@ internal static partial class Program
             Console.WriteLine();
             Console.WriteLine($"{"Object",-8} {"Type",-22} {"Name",-26} {"Value",-14} Description");
             foreach (var s in summaries)
-                Console.WriteLine($"{BacnetNames.ObjectTypeShort(s.Id.type)} {s.Id.instance,-4} {s.TypeName,-22} {s.Name ?? "-",-26} {s.ValueText,-14} {s.Description}");
+                Console.WriteLine($"{BacnetNames.ObjectTypeShort(s.Id.type),-3} {s.Id.instance,-4} {s.TypeName,-22} {s.Name ?? "-",-26} {s.ValueText,-14} {s.Description}");
             return 0;
         }
         catch (Exception ex)

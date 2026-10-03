@@ -42,7 +42,7 @@ internal static partial class Program
 
         var last = watched.ToDictionary(p => p.Id, p => (Value: p.ValueText, Override: p.OverrideText));
         foreach (var p in watched)
-            Console.WriteLine($"  {BacnetNames.ObjectTypeShort(p.Id.type)} {p.Id.instance,-3} {p.Name,-22} {p.ValueText}{(p.IsOverridden ? $"   [override {p.OverrideText}]" : "")}");
+            Console.WriteLine($"  {BacnetNames.ObjectTypeShort(p.Id.type),-3} {p.Id.instance,-3} {p.Name,-22} {p.ValueText}{(p.IsOverridden ? $"   [override {p.OverrideText}]" : "")}");
 
         var watcher = svc.CreateLiveWatcher(device, watched, new LiveOptions(TimeSpan.FromSeconds(interval), useCov) { CovLifetimeSeconds = (uint)IntOpt(opts, "cov-lifetime", 300) });
         var lastMode = "";
@@ -68,7 +68,7 @@ internal static partial class Program
                 ? (p.IsOverridden ? $"   [override now {p.OverrideText}]" : "   [override released]")
                 : "";
             var change = before.Value == p.ValueText ? p.ValueText : $"{before.Value} -> {p.ValueText}";
-            Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {BacnetNames.ObjectTypeShort(p.Id.type)} {p.Id.instance,-3} {p.Name,-22} {change}{note}");
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {BacnetNames.ObjectTypeShort(p.Id.type),-3} {p.Id.instance,-3} {p.Name,-22} {change}{note}");
         };
 
         using var cts = new CancellationTokenSource();

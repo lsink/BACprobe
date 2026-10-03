@@ -17,16 +17,17 @@ public sealed record JobInfo(
     string AppVersion = "");
 
 public sealed record SavedObject(BacnetObjectTypes Type, uint Instance, string? Name, string? Description,
-    string? PresentValue, string? Units, uint? UnitsCode, IReadOnlyList<PrioritySlot>? Slots = null)
+    string? PresentValue, string? Units, uint? UnitsCode, IReadOnlyList<PrioritySlot>? Slots = null,
+    IReadOnlyList<string?>? StateNames = null)
 {
     public ObjectSummary ToSummary() => new()
     {
         Id = new BacnetObjectId(Type, Instance), Name = Name, Description = Description,
-        PresentValue = PresentValue, Units = Units, UnitsCode = UnitsCode, PrioritySlots = Slots ?? [],
+        PresentValue = PresentValue, Units = Units, UnitsCode = UnitsCode, PrioritySlots = Slots ?? [], StateNames = StateNames,
     };
 
     public static SavedObject From(ObjectSummary s) =>
-        new(s.Id.type, s.Id.instance, s.Name, s.Description, s.PresentValue, s.Units, s.UnitsCode, s.PrioritySlots);
+        new(s.Id.type, s.Id.instance, s.Name, s.Description, s.PresentValue, s.Units, s.UnitsCode, s.PrioritySlots, s.StateNames);
 }
 
 /// <summary>A device as saved: enough to show it offline and, if it is still where it was, to talk to it again.</summary>

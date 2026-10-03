@@ -86,7 +86,7 @@ public static class PointExporter
     [
         d.Device.InstanceId, text(d.Name), d.Device.AddressText,
         BacnetNames.ObjectTypeName(o.Id.type), o.Id.instance, text(o.Name),
-        text(o.Description), text(o.PresentValue), text(o.Units),
+        text(o.Description), text(o.DisplayValue), text(o.Units),
         IsUsuallyWritable(o.Id.type) ? "Yes" : "No",
     ];
 

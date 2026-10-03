@@ -275,14 +275,14 @@
               <DockPanel Margin="0,6,0,0">
                 <TextBlock Text="Value" Width="60" VerticalAlignment="Center" />
                 <Grid>
-                  <!-- On/off points: a dropdown. Everything else: type a number. -->
-                  <ComboBox ItemsSource="{Binding BinaryChoices}" SelectedItem="{Binding SelectedBinaryChoice}"
-                            DisplayMemberPath="Label" AutomationProperties.Name="On or off"
-                            Visibility="{Binding IsBinarySelected, Converter={StaticResource BoolToVis}}" />
+                  <!-- On/off points and named multi-state points: a dropdown. Everything else: type a number. -->
+                  <ComboBox ItemsSource="{Binding StateChoices}" SelectedItem="{Binding SelectedStateChoice}"
+                            DisplayMemberPath="Label" AutomationProperties.Name="State to write"
+                            Visibility="{Binding IsStateSelected, Converter={StaticResource BoolToVis}}" />
                   <TextBox Text="{Binding WriteValueText, UpdateSourceTrigger=PropertyChanged}"
                            AutomationProperties.Name="Value to write"
-                           Visibility="{Binding IsNotBinarySelected, Converter={StaticResource BoolToVis}}"
-                           ToolTip="A number for analog points; 1, 2, 3... for multi-state." />
+                           Visibility="{Binding IsNotStateSelected, Converter={StaticResource BoolToVis}}"
+                           ToolTip="A number for analog points; 1, 2, 3... for multi-state points whose states have no names." />
                 </Grid>
               </DockPanel>
               <DockPanel Margin="0,6,0,0">

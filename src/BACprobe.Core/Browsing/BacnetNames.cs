@@ -173,6 +173,8 @@ public static class BacnetNames
         }
         if (property == BacnetPropertyIds.PROP_OBJECT_LIST)
             return $"{values.Count} objects";
+        if (property == BacnetPropertyIds.PROP_STATE_TEXT && values[0].Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_ERROR)
+            return string.Join("; ", values.Select((v, i) => $"{i + 1} = {Convert.ToString(v.Value, CultureInfo.InvariantCulture)}"));
         return values.Count == 1
             ? FormatValue(objectType, property, values[0])
             : string.Join(", ", values.Select(v => FormatValue(objectType, property, v)));

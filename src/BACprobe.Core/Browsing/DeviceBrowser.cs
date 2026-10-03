@@ -27,9 +27,23 @@ public sealed class ObjectSummary
             return $"P{p} {BacnetNames.PriorityName(p)}";
         }
     }
+    /// <summary>The device's names for this point's states (see <see cref="StateText"/>); null if it gave none.</summary>
+    public IReadOnlyList<string?>? StateNames { get; set; }
+
+    /// <summary>Present value with its state name when the device gave one, e.g. "Occupied (2)" or "On (Active)".</summary>
+    public string DisplayValue => StateText.Label(Id.type, PresentValue, StateNames);
+
+    /// <summary>One slot as shown to the user, with the state name: "8 (Manual Operator) = Standby (3)".</summary>
+    public string SlotText(PrioritySlot slot) =>
+        $"{slot.Priority} ({BacnetNames.PriorityName(slot.Priority)}) = {StateText.Label(Id.type, slot.ValueText, StateNames)}";
+
+    /// <summary>The whole priority array as shown in the properties panel.</summary>
+    public string PriorityArrayText =>
+        PrioritySlots.Count == 0 ? "no overrides (all 16 slots empty)" : string.Join("; ", PrioritySlots.Select(SlotText));
+
     /// <summary>All occupied slots, for a tooltip.</summary>
     public string OverrideTooltip =>
-        PrioritySlots.Count == 0 ? "" : "Priority array: " + string.Join("; ", PrioritySlots.Select(s => s.Description));
+        PrioritySlots.Count == 0 ? "" : "Priority array: " + string.Join("; ", PrioritySlots.Select(SlotText));
     /// <summary>
     /// Store freshly read live fields. Returns true only if something the user can see changed,
     /// so a refresh that finds the same values does not make the screen flicker.
@@ -61,6 +75,7 @@ public sealed class ObjectSummary
         PresentValue = fresh.PresentValue ?? PresentValue;
         Units = fresh.Units ?? Units;
         UnitsCode = fresh.UnitsCode ?? UnitsCode;
+        StateNames = fresh.StateNames ?? StateNames;
         PrioritySlots = fresh.PrioritySlots;
     }
 
@@ -69,8 +84,8 @@ public sealed class ObjectSummary
 
     public string TypeName => BacnetNames.ObjectTypeName(Id.type);
     public string Label => BacnetNames.ObjectLabel(Id);
-    /// <summary>Present value with units, e.g. "72.4 °F".</summary>
-    public string ValueText => string.IsNullOrEmpty(Units) ? PresentValue ?? "" : $"{PresentValue} {Units}";
+    /// <summary>Present value with units or state name, e.g. "72.4 °F" or "Occupied (2)".</summary>
+    public string ValueText => string.IsNullOrEmpty(Units) ? DisplayValue : $"{DisplayValue} {Units}";
 }
 
 public sealed record PropertyRow(uint PropertyId, string Name, string Display, bool IsVendorSpecific, bool IsError);
@@ -86,9 +101,13 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_UNITS,
     ];
 
-    /// <summary>The four basics for every object, plus the priority array for points that can be commanded.</summary>
+    /// <summary>The four basics for every object, plus the priority array for points that can be commanded and the state names of binary and multi-state points.</summary>
     private static BacnetPropertyIds[] SummaryPropsFor(BacnetObjectTypes type) =>
-        PriorityArrayInfo.MayHavePriorityArray(type) ? [.. SummaryProps, BacnetPropertyIds.PROP_PRIORITY_ARRAY] : SummaryProps;
+    [
+        .. SummaryProps,
+        .. PriorityArrayInfo.MayHavePriorityArray(type) ? [BacnetPropertyIds.PROP_PRIORITY_ARRAY] : Array.Empty<BacnetPropertyIds>(),
+        .. StateText.NameProperties(type),
+    ];
 
     // Used when a device will not do ReadPropertyMultiple with PROP_ALL.
     private static readonly BacnetPropertyIds[] CommonProps =
@@ -96,7 +115,8 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         BacnetPropertyIds.PROP_OBJECT_NAME, BacnetPropertyIds.PROP_OBJECT_TYPE, BacnetPropertyIds.PROP_DESCRIPTION,
         BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_UNITS, BacnetPropertyIds.PROP_STATUS_FLAGS,
         BacnetPropertyIds.PROP_OUT_OF_SERVICE, BacnetPropertyIds.PROP_PRIORITY_ARRAY, BacnetPropertyIds.PROP_RELINQUISH_DEFAULT,
-        BacnetPropertyIds.PROP_INACTIVE_TEXT, BacnetPropertyIds.PROP_ACTIVE_TEXT,
+        BacnetPropertyIds.PROP_INACTIVE_TEXT, BacnetPropertyIds.PROP_ACTIVE_TEXT, BacnetPropertyIds.PROP_NUMBER_OF_STATES,
+        BacnetPropertyIds.PROP_STATE_TEXT,
     ];
 
     private BacnetObjectId DeviceObject => new(BacnetObjectTypes.OBJECT_DEVICE, device.InstanceId);
@@ -312,6 +332,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
     private static void ApplySummary(ObjectSummary s, BacnetPropertyIds prop, IList<BacnetValue>? values)
     {
         if (values is null || values.Count == 0 || values[0].Tag == BacnetApplicationTags.BACNET_APPLICATION_TAG_ERROR) return;
+        s.StateNames = StateText.Merge(s.StateNames, s.Id.type, prop, values);
         var text = BacnetNames.FormatValues(s.Id.type, prop, values);
         switch (prop)
         {
@@ -364,7 +385,6 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
 
     public async Task<IReadOnlyList<PropertyRow>> ReadAllPropertiesAsync(BacnetObjectId id, CancellationToken ct = default)
     {
-        var rows = new List<PropertyRow>();
         var named = NamedProps(id.type);
         try
         {
@@ -372,40 +392,82 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
                 ? named.Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList()
                 : [new((uint)BacnetPropertyIds.PROP_ALL, ASN1.BACNET_ARRAY_ALL)];
             var results = await client.ReadPropertyMultipleAsync(device.Address, id, refs, cancellationToken: ct);
+            var raw = new List<(uint, IList<BacnetValue>?)>();
             foreach (var pv in results.SelectMany(r => r.values))
             {
                 // We asked for these by name; an optional one the device does not have is not worth a row.
                 if (named is not null && IsUnknownProperty(pv.value)) continue;
-                rows.Add(ToRow(id.type, pv.property.propertyIdentifier, pv.value));
+                raw.Add((pv.property.propertyIdentifier, pv.value));
             }
-            return rows;
+            return ToRows(id.type, raw);
         }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
-            rows.Clear(); // no RPM / no PROP_ALL: read the common ones one by one
+            // no RPM / no PROP_ALL: read the common ones one by one
         }
 
+        var oneByOne = new List<(uint, IList<BacnetValue>?)>();
         foreach (var p in named ?? CommonProps)
         {
             try
             {
-                var values = await client.ReadPropertyAsync(device.Address, id, p, cancellationToken: ct);
-                rows.Add(ToRow(id.type, (uint)p, values));
+                oneByOne.Add(((uint)p, await client.ReadPropertyAsync(device.Address, id, p, cancellationToken: ct)));
             }
             catch (Exception) when (!ct.IsCancellationRequested) { /* not present */ }
         }
-        return rows;
+        return ToRows(id.type, oneByOne);
     }
 
     private static bool IsUnknownProperty(IList<BacnetValue>? values) =>
         values is { Count: > 0 } && values[0].Tag == BacnetApplicationTags.BACNET_APPLICATION_TAG_ERROR
         && values[0].Value is BacnetError { error_code: BacnetErrorCodes.ERROR_CODE_UNKNOWN_PROPERTY };
 
+    /// <summary>The point's state names (State_Text, or Inactive/Active_Text); null if it has none or will not say. Never throws for that.</summary>
+    public async Task<IReadOnlyList<string?>?> ReadStateNamesAsync(BacnetObjectId id, CancellationToken ct = default)
+    {
+        IReadOnlyList<string?>? names = null;
+        foreach (var p in StateText.NameProperties(id.type))
+        {
+            try { names = StateText.Merge(names, id.type, p, await client.ReadPropertyAsync(device.Address, id, p, cancellationToken: ct)); }
+            catch (Exception) when (!ct.IsCancellationRequested) { /* optional property */ }
+        }
+        return names;
+    }
+
     /// <summary>Read one named property; throws the library's exception on error or timeout.</summary>
     public async Task<PropertyRow> ReadPropertyAsync(BacnetObjectId id, BacnetPropertyIds property, CancellationToken ct = default)
     {
         var values = await client.ReadPropertyAsync(device.Address, id, property, cancellationToken: ct);
         return ToRow(id.type, (uint)property, values);
+    }
+
+    /// <summary>
+    /// Rows for the properties panel. The state names are found first, so Present Value, Relinquish Default and the
+    /// priority array can show "Occupied (2)" rather than a bare number, wherever they came in the answer.
+    /// </summary>
+    public static IReadOnlyList<PropertyRow> ToRows(BacnetObjectTypes type, IReadOnlyList<(uint Property, IList<BacnetValue>? Values)> raw)
+    {
+        IReadOnlyList<string?>? names = null;
+        foreach (var (p, v) in raw) names = StateText.Merge(names, type, (BacnetPropertyIds)p, v);
+
+        var rows = new List<PropertyRow>(raw.Count);
+        foreach (var (p, v) in raw)
+        {
+            var row = ToRow(type, p, v);
+            if (names is not null && !row.IsError && v is { Count: > 0 })
+            {
+                if (p is (uint)BacnetPropertyIds.PROP_PRESENT_VALUE or (uint)BacnetPropertyIds.PROP_RELINQUISH_DEFAULT)
+                    row = row with { Display = StateText.Label(type, row.Display, names) };
+                else if (p == (uint)BacnetPropertyIds.PROP_PRIORITY_ARRAY)
+                    row = row with
+                    {
+                        Display = new ObjectSummary { Id = new BacnetObjectId(type, 0), StateNames = names, PrioritySlots = PriorityArrayInfo.Occupied(type, v) }
+                            .PriorityArrayText,
+                    };
+            }
+            rows.Add(row);
+        }
+        return rows;
     }
 
     private static PropertyRow ToRow(BacnetObjectTypes type, uint propertyId, IList<BacnetValue>? values)

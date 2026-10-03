@@ -115,6 +115,18 @@ public sealed class SimulatedDeviceModel
         if (commandable) MakeCommandable(o, Enum(value ? 1u : 0u));
     }
 
+    /// <summary>A multi-state point: states are numbered from 1, and <paramref name="states"/> are their names (State_Text).</summary>
+    public void AddMultiState(BacnetObjectTypes type, uint instance, string name, string description, uint value, string[] states)
+    {
+        var o = Add(type, instance, name);
+        Set(o, BacnetPropertyIds.PROP_DESCRIPTION, Str(description));
+        Set(o, BacnetPropertyIds.PROP_PRESENT_VALUE, Uint(value));
+        Set(o, BacnetPropertyIds.PROP_NUMBER_OF_STATES, Uint((uint)states.Length));
+        Set(o, BacnetPropertyIds.PROP_STATE_TEXT, [.. states.Select(Str)]);
+        Set(o, BacnetPropertyIds.PROP_OUT_OF_SERVICE, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, false));
+        if (type != BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT) MakeCommandable(o, Uint(value));
+    }
+
     private static void MakeCommandable(SimObject o, BacnetValue relinquishDefault)
     {
         o.Priority = new BacnetValue?[16];
@@ -306,6 +318,11 @@ public sealed class SimulatedDeviceModel
         m.AddBinaryValue(1, "Occupied", "Occupancy mode", true);
         m.AddBinaryOutput(1, "Fan Command", "Supply fan start/stop", false);
         m.AddFollower(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_INPUT, 1), new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_OUTPUT, 1));
+        m.AddMultiState(BacnetObjectTypes.OBJECT_MULTI_STATE_VALUE, 1, "Occupancy Mode", "Occupied / unoccupied / standby", 1,
+            ["Occupied", "Unoccupied", "Standby"]);
+        m.AddMultiState(BacnetObjectTypes.OBJECT_MULTI_STATE_OUTPUT, 1, "Fan Speed", "Supply fan speed command", 3, ["Off", "Low", "Medium", "High"]);
+        m.AddMultiState(BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT, 1, "Filter Status", "Filter differential pressure switch", 1,
+            ["Clean", "Dirty", "Missing"]);
         // Troublemakers for testing the write explainer: a point already held at a high priority, and one that refuses writes.
         if (stuck) m.PreOverride(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_VALUE, 1), 5, Enum(1));
         if (protectedSetpoint) m.Lock(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1));
@@ -335,7 +352,7 @@ public sealed class SimulatedDeviceModel
             .Select(k => new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_OBJECT_ID, k)).ToList();
 
     private static bool IsArray(BacnetPropertyIds p) =>
-        p is BacnetPropertyIds.PROP_OBJECT_LIST or BacnetPropertyIds.PROP_PRIORITY_ARRAY;
+        p is BacnetPropertyIds.PROP_OBJECT_LIST or BacnetPropertyIds.PROP_PRIORITY_ARRAY or BacnetPropertyIds.PROP_STATE_TEXT;
 
     private List<BacnetValue>? Raw(SimObject o, BacnetPropertyIds p)
     {
@@ -438,9 +455,14 @@ public sealed class SimulatedDeviceModel
                 // A real controller checks the kind of value and its limits before accepting a write.
                 var wantsReal = id.type is BacnetObjectTypes.OBJECT_ANALOG_OUTPUT or BacnetObjectTypes.OBJECT_ANALOG_VALUE;
                 var wantsEnum = id.type is BacnetObjectTypes.OBJECT_BINARY_OUTPUT or BacnetObjectTypes.OBJECT_BINARY_VALUE;
+                var wantsState = id.type is BacnetObjectTypes.OBJECT_MULTI_STATE_OUTPUT or BacnetObjectTypes.OBJECT_MULTI_STATE_VALUE;
                 if ((wantsReal && value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_REAL)
-                    || (wantsEnum && value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED))
+                    || (wantsEnum && value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED)
+                    || (wantsState && value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_UNSIGNED_INT))
                     return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_INVALID_DATA_TYPE);
+                if (wantsState && o.Props.TryGetValue(BacnetPropertyIds.PROP_NUMBER_OF_STATES, out var count) && count is [{ Value: uint states }]
+                    && value.Value is uint state && (state < 1 || state > states))
+                    return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_VALUE_OUT_OF_RANGE);
                 if (wantsReal && value.Value is float f
                     && o.Props.TryGetValue(BacnetPropertyIds.PROP_MIN_PRES_VALUE, out var lo) && lo is [{ Value: float min }]
                     && o.Props.TryGetValue(BacnetPropertyIds.PROP_MAX_PRES_VALUE, out var hi) && hi is [{ Value: float max }]

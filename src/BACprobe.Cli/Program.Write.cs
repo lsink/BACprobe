@@ -27,10 +27,10 @@ internal static partial class Program
         if (!release)
         {
             if (!opts.TryGetValue("value", out valueText) || valueText is null)
-                throw new ArgumentException("Say what to write with --value, e.g. --value 72.5 (analog) or --value on (binary).");
-            if (!WriteValueParser.TryParse(id.type, valueText, out var parsed, out var parseError))
+                throw new ArgumentException("Say what to write with --value, e.g. --value 72.5 (analog), --value on (binary) or --value Standby (multi-state).");
+            // A state name ("Standby") can only be checked once the device has said what its states are called.
+            if (!WriteValueParser.TryParse(id.type, valueText, out var parsed, out var parseError) && StateText.NameProperties(id.type).Length == 0)
                 throw new ArgumentException(parseError);
-            value = parsed;
         }
 
         var (svc, device, error) = await ConnectToDeviceAsync(opts);
@@ -39,12 +39,15 @@ internal static partial class Program
 
         var browser = svc.OpenDevice(device);
         string deviceName, pointName, current;
+        IReadOnlyList<string?>? stateNames;
         try
         {
+            stateNames = await browser.ReadStateNamesAsync(id);
             deviceName = (await browser.ReadPropertyAsync(new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, device.InstanceId),
                 BacnetPropertyIds.PROP_OBJECT_NAME)).Display;
             pointName = (await browser.ReadPropertyAsync(id, BacnetPropertyIds.PROP_OBJECT_NAME)).Display;
-            current = BuildCurrent(await browser.ReadPropertyAsync(id, BacnetPropertyIds.PROP_PRESENT_VALUE),
+            var pv = await browser.ReadPropertyAsync(id, BacnetPropertyIds.PROP_PRESENT_VALUE);
+            current = BuildCurrent(pv with { Display = StateText.Label(id.type, pv.Display, stateNames) },
                 await TryReadAsync(browser, id, BacnetPropertyIds.PROP_UNITS));
         }
         catch (Exception ex)
@@ -52,7 +55,16 @@ internal static partial class Program
             return Fail(ReadFailure(ex));
         }
 
-        var request = new WriteRequest(device, deviceName, id, pointName, value, release ? "release" : valueText!, priority, current);
+        if (!release)
+        {
+            if (!WriteValueParser.TryParse(id.type, valueText!, stateNames, out var parsed, out var parseError))
+                return Fail(parseError + StateHint(id.type, stateNames));
+            value = parsed;
+        }
+
+        // What will be written, as the device will show it: "Standby (3)", "On (Active)", "72.5".
+        var request = new WriteRequest(device, deviceName, id, pointName, value,
+            value is { } v ? StateText.Describe(id.type, v, stateNames) : "release", priority, current);
         Console.WriteLine();
         Console.WriteLine(request.ConfirmationText());
         Console.WriteLine();
@@ -85,10 +97,10 @@ internal static partial class Program
         else Console.WriteLine(release ? "Released." : "Done - the device accepted the write.");
         try
         {
-            var after = await browser.ReadPropertyAsync(id, BacnetPropertyIds.PROP_PRESENT_VALUE);
-            var arr = await TryReadAsync(browser, id, BacnetPropertyIds.PROP_PRIORITY_ARRAY);
-            Console.WriteLine($"  Present value now: {after.Display}");
-            if (arr is not null) Console.WriteLine($"  Priority array:    {arr.Display}");
+            // As a summary, so it comes with the state names: "Standby (3)" rather than "3".
+            var after = (await browser.ReadSummariesAsync([id]))[0];
+            Console.WriteLine($"  Present value now: {after.ValueText}");
+            if (PriorityArrayInfo.MayHavePriorityArray(id.type)) Console.WriteLine($"  Priority array:    {after.PriorityArrayText}");
         }
         catch (Exception) { Console.WriteLine("  (Could not read the point back to verify; check it before you leave.)"); }
 
@@ -113,6 +125,12 @@ internal static partial class Program
         try { return await browser.ReadPropertyAsync(id, prop); }
         catch (Exception) { return null; }
     }
+
+    /// <summary>A line listing the states, e.g. "This point's states: 1 = Occupied, 2 = Unoccupied", when the device named them.</summary>
+    private static string StateHint(BacnetObjectTypes type, IReadOnlyList<string?>? names) =>
+        StateText.IsMultiState(type) && names is { Count: > 0 }
+            ? Environment.NewLine + "  This point's states: " + string.Join(", ", names.Select((n, i) => $"{i + 1} = {n}"))
+            : "";
 
     private static string BuildCurrent(PropertyRow pv, PropertyRow? units) =>
         string.IsNullOrEmpty(units?.Display) ? pv.Display : $"{pv.Display} {units.Display}";

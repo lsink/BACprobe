@@ -57,8 +57,8 @@ public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
     public void Refresh() => OnPropertyChanged(string.Empty);
 }
 
-/// <summary>One entry in the On/Off dropdown: what the tech sees, and the text the write parser understands.</summary>
-public sealed record BinaryChoice(string Label, string Text);
+/// <summary>One entry in the state dropdown ("On (Active)", "Standby (3)"): what the tech sees, and the text the write parser understands.</summary>
+public sealed record StateChoice(string Label, string Text);
 
 public sealed class ObjectRow(ObjectSummary s) : ObservableObject
 {
@@ -180,13 +180,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private PriorityChoice _selectedPriority = PriorityChoice.Default;
     [ObservableProperty] private string _writeValueText = "";
 
-    // On/off points get a dropdown instead of a text box, so nobody has to remember what to type.
-    public IReadOnlyList<BinaryChoice> BinaryChoices { get; } = [new("On (Active)", "on"), new("Off (Inactive)", "off")];
+    // On/off points, and multi-state points whose states have names, get a dropdown instead of a text box,
+    // so nobody has to remember what to type or which number means what.
+    public ObservableCollection<StateChoice> StateChoices { get; } = [];
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsNotBinarySelected))]
-    private bool _isBinarySelected;
+    [NotifyPropertyChangedFor(nameof(IsNotStateSelected))]
+    private bool _isStateSelected;
 
-    public bool IsNotBinarySelected => !IsBinarySelected;
+    public bool IsNotStateSelected => !IsStateSelected;
 
     /// <summary>Open the Find window: search every point on every device read so far.</summary>
     [RelayCommand]
@@ -242,9 +243,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var name = device.Name == "-" ? $"Device {device.Instance}" : device.Name;
         ShowTrend(new TrendViewModel(_svc.OpenTrendLogs(device.Device), SelectedObject.Summary.Id, name, device.Instance, PickTrendFile));
     }
-    [ObservableProperty] private BinaryChoice? _selectedBinaryChoice;
+    [ObservableProperty] private StateChoice? _selectedStateChoice;
 
-    partial void OnSelectedBinaryChoiceChanged(BinaryChoice? value)
+    partial void OnSelectedStateChoiceChanged(StateChoice? value)
     {
         if (value is not null) WriteValueText = value.Text;
     }
@@ -604,9 +605,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             var r = Properties[i];
             if (r.PropertyId == (uint)BacnetPropertyIds.PROP_PRESENT_VALUE && s.PresentValue is not null)
-                Properties[i] = r with { Display = s.PresentValue };
+                Properties[i] = r with { Display = s.DisplayValue };
             else if (r.PropertyId == (uint)BacnetPropertyIds.PROP_PRIORITY_ARRAY)
-                Properties[i] = r with { Display = PriorityArrayInfo.DescribeSlots(s.PrioritySlots) };
+                Properties[i] = r with { Display = s.PriorityArrayText };
         }
     }
 
@@ -628,15 +629,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         // A value typed for one point must never carry over to the next.
         WriteValueText = "";
-        SelectedBinaryChoice = null;
-        IsBinarySelected = value?.Summary.Id.type is BacnetObjectTypes.OBJECT_BINARY_OUTPUT or BacnetObjectTypes.OBJECT_BINARY_VALUE;
+        SelectedStateChoice = null;
+        StateChoices.Clear();
+        if (value is not null)
+            foreach (var (label, text) in StateText.Choices(value.Summary.Id.type, value.Summary.StateNames))
+                StateChoices.Add(new StateChoice(label, text));
+        IsStateSelected = StateChoices.Count > 0;
         IsTrendSelected = value?.Summary.Id.type == BacnetObjectTypes.OBJECT_TRENDLOG && _svc is not null;
-        if (IsBinarySelected && value is not null)
+        if (value is not null && StateText.IsBinary(value.Summary.Id.type))
         {
             // Most overrides flip the point, so start on the opposite of what it is now. The confirmation still shows the new value.
             var isOn = string.Equals(value.Summary.PresentValue, "Active", StringComparison.OrdinalIgnoreCase);
-            SelectedBinaryChoice = BinaryChoices[isOn ? 1 : 0];
+            SelectedStateChoice = StateChoices[isOn ? 1 : 0];
         }
+        // A multi-state point starts with nothing picked: there is no obvious "other" state, and guessing could write the wrong one.
         _ = LoadPropertiesAsync(value);
     }
 
@@ -921,7 +927,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         BacnetValue? value = null;
         if (!release)
         {
-            if (!WriteValueParser.TryParse(obj.Id.type, WriteValueText, out var parsed, out var error))
+            if (IsStateSelected && SelectedStateChoice is null)
+            {
+                Status = "Pick the state to write from the Value list.";
+                return;
+            }
+            if (!WriteValueParser.TryParse(obj.Id.type, WriteValueText, obj.StateNames, out var parsed, out var error))
             {
                 Status = error;
                 return;
@@ -931,7 +942,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         var deviceName = deviceRow.Name == "-" ? $"device {deviceRow.Instance}" : deviceRow.Name;
         var request = new WriteRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label, value,
-            release ? "release" : IsBinarySelected && SelectedBinaryChoice is { } choice ? choice.Label : WriteValueText.Trim(),
+            value is { } v ? StateText.Describe(obj.Id.type, v, obj.StateNames) : "release", // "Standby (3)", "On (Active)"
             SelectedPriority.Number, obj.ValueText);
 
         if (!ConfirmWrite(request))

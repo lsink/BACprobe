@@ -78,6 +78,8 @@ Routers / network map: `AddressInfo` (the library reports a device behind a rout
 
 Write explainer: `DeviceWriter.ExecuteAsync` returns `WriteOutcome.Explanation` (a `PromptContent`). After an accepted write it re-reads the point for up to 3 s (`PointProber`) and `WriteExplainer.ExplainIneffective` names why nothing changed; after a refusal it probes once and `ExplainFailure` explains. Pure logic in `WriteExplainer`; simulator can misbehave via `--stuck` (bv:1 held at priority 5) and `--protected` (av:1 refuses); the damper (ao:1) enforces 0-100. Unverified against real hardware.
 
+State text: `Browsing/StateText` (pure) labels multi-state values with State_Text ("Standby (3)") and binary values with Inactive/Active_Text ("Open (Active)"). `ObjectSummary.StateNames` holds the names (binary as [inactive, active]); `PresentValue` stays raw so live updates and COV compare as before, and `DisplayValue`/`ValueText`/`PriorityArrayText` add the names. Read with the summaries; saved in job files (schema 3, `objects.state_texts`). App: one state dropdown for binary and named multi-state points; CLI `write --value Standby`. Simulator sample devices have MSV/MSO/MSI points.
+
 Learned the hard way:
 - `BacnetClient.MaxSegments` defaults to MAX_SEG0 ("send me nothing bigger than one packet"): big object lists and PROP_ALL
   then abort. `DiscoveryService` sets MAX_SEG65. Never ask the device object for PROP_ALL either (it drags in Object_List); `DeviceBrowser` names its properties.
