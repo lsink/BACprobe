@@ -3,10 +3,12 @@ using BACprobe.Core.Discovery;
 
 namespace BACprobe.Core.Live;
 
+/// <param name="Retryable">Refused only because the device did not answer: worth asking again once it does.</param>
 public sealed record CovSubscribeResult(
     IReadOnlyList<BacnetObjectId> Subscribed,
     IReadOnlyDictionary<BacnetObjectId, string> Refused,
-    string? DeviceWideReason);
+    string? DeviceWideReason,
+    IReadOnlyList<BacnetObjectId> Retryable);
 
 /// <summary>
 /// Change-of-value subscriptions to one device: the device pushes a notification when a point changes, instead of us polling.
@@ -26,6 +28,12 @@ public sealed class CovSession : IDisposable
     private static uint s_nextProcess;
     private Timer? _renewTimer;
     private bool _disposed;
+    private int _renewing; // 1 while a renewal pass runs: a slow pass must not overlap the next one
+
+    /// <summary>After this many timeouts in a row the device is treated as not answering, instead of waiting out every point.</summary>
+    public const int MaxTimeoutsInARow = 3;
+
+    public const string StoppedAnswering = "the device stopped answering subscriptions";
 
     public CovSession(BacnetClient client, DiscoveredDevice device, uint lifetimeSeconds = 300)
     {
@@ -54,7 +62,9 @@ public sealed class CovSession : IDisposable
     {
         var ok = new List<BacnetObjectId>();
         var refused = new Dictionary<BacnetObjectId, string>();
+        var retryable = new List<BacnetObjectId>();
         string? deviceWide = null;
+        var timeouts = 0;
 
         foreach (var id in ids)
         {
@@ -62,6 +72,7 @@ public sealed class CovSession : IDisposable
             if (deviceWide is not null)
             {
                 refused[id] = deviceWide;
+                if (deviceWide == StoppedAnswering) retryable.Add(id);
                 continue;
             }
 
@@ -76,17 +87,27 @@ public sealed class CovSession : IDisposable
                     _objectByProcess[process] = id;
                 }
                 ok.Add(id);
+                timeouts = 0;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 var r = CovRefusal.Explain(ex);
                 refused[id] = r.Reason;
-                if (r.StopTrying) deviceWide = r.Reason;
+                if (CovRefusal.IsTimeout(ex))
+                {
+                    retryable.Add(id);
+                    if (++timeouts >= MaxTimeoutsInARow) deviceWide = StoppedAnswering; // do not wait out every remaining point
+                }
+                else
+                {
+                    timeouts = 0;
+                    if (r.StopTrying) deviceWide = r.Reason;
+                }
             }
         }
 
         if (ok.Count > 0) ScheduleRenewal();
-        return new CovSubscribeResult(ok, refused, deviceWide);
+        return new CovSubscribeResult(ok, refused, deviceWide, retryable);
     }
 
     private void ScheduleRenewal()
@@ -101,30 +122,48 @@ public sealed class CovSession : IDisposable
 
     private async Task RenewAllAsync()
     {
-        KeyValuePair<BacnetObjectId, uint>[] active;
-        lock (_lock)
+        if (Interlocked.Exchange(ref _renewing, 1) == 1) return; // the previous pass is still waiting on a slow device
+        try
         {
-            if (_disposed) return;
-            active = [.. _processByObject];
-        }
-
-        foreach (var (id, process) in active)
-        {
-            try
+            KeyValuePair<BacnetObjectId, uint>[] active;
+            lock (_lock)
             {
-                await _client.SubscribeCOVAsync(_device.Address, id, process, cancel: false, issueConfirmedNotifications: false,
-                    lifetime: _lifetimeSeconds);
+                if (_disposed) return;
+                active = [.. _processByObject];
             }
-            catch (Exception ex)
+
+            var timeouts = 0;
+            string? gaveUp = null;
+            foreach (var (id, process) in active)
             {
+                if (_disposed) return;
+                string? reason = gaveUp;
+                if (reason is null)
+                {
+                    try
+                    {
+                        await _client.SubscribeCOVAsync(_device.Address, id, process, cancel: false, issueConfirmedNotifications: false,
+                            lifetime: _lifetimeSeconds);
+                        timeouts = 0;
+                    }
+                    catch (Exception ex)
+                    {
+                        reason = CovRefusal.Explain(ex).Reason;
+                        if (!CovRefusal.IsTimeout(ex)) timeouts = 0;
+                        else if (++timeouts >= MaxTimeoutsInARow) gaveUp = StoppedAnswering; // the rest go to polling without waiting
+                    }
+                }
+                if (reason is null) continue;
+
                 lock (_lock)
                 {
                     _processByObject.Remove(id);
                     _objectByProcess.Remove(process);
                 }
-                Lost?.Invoke(id, CovRefusal.Explain(ex).Reason);
+                Lost?.Invoke(id, reason);
             }
         }
+        finally { Interlocked.Exchange(ref _renewing, 0); }
     }
 
     private void OnNotification(BacnetClient sender, BacnetAddress adr, byte invokeId, uint subscriberProcess,

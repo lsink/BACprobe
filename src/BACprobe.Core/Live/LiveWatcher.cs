@@ -15,6 +15,9 @@ public sealed record LiveOptions(TimeSpan PollInterval, bool UseCov = true)
     public TimeSpan SafetyPoll { get; init; } = TimeSpan.FromSeconds(30);
 
     public uint CovLifetimeSeconds { get; init; } = 300;
+
+    /// <summary>How often to try COV again for points that lost it because the device stopped answering (a restart, a network drop).</summary>
+    public TimeSpan ResubscribeEvery { get; init; } = TimeSpan.FromSeconds(60);
 }
 
 /// <summary>
@@ -29,6 +32,7 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
 
     private readonly Lock _lock = new();
     private readonly HashSet<BacnetObjectId> _covSet = [];
+    private readonly HashSet<BacnetObjectId> _retryCov = []; // lost COV for a reason that may pass; polled meanwhile
     private string? _deviceWideRefusal;
     private DateTime? _lastUpdate;
     private volatile bool _ready; // false while subscribing, so the status does not flash "polling" before COV is set up
@@ -100,7 +104,11 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
                 };
                 cov.Lost += (id, _) =>
                 {
-                    lock (_lock) _covSet.Remove(id); // falls back to polling
+                    lock (_lock)
+                    {
+                        _covSet.Remove(id); // falls back to polling
+                        _retryCov.Add(id);  // and COV is tried again once the device answers
+                    }
                     Publish();
                 };
 
@@ -109,6 +117,7 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
                 lock (_lock)
                 {
                     foreach (var id in result.Subscribed) _covSet.Add(id);
+                    foreach (var id in result.Retryable) _retryCov.Add(id);
                     _deviceWideRefusal = result.DeviceWideReason;
                 }
             }
@@ -134,6 +143,7 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
             Publish();
             var failures = 0;
             var sinceSafety = Stopwatch.StartNew();
+            var sinceResubscribe = Stopwatch.StartNew();
             using var timer = new PeriodicTimer(options.PollInterval);
             while (await timer.WaitForNextTickAsync(ct))
             {
@@ -144,6 +154,11 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
                 {
                     due = live;
                     sinceSafety.Restart();
+                }
+                if (cov is not null && failures == 0 && sinceResubscribe.Elapsed >= options.ResubscribeEvery)
+                {
+                    sinceResubscribe.Restart();
+                    await ResubscribeAsync(cov, ct);
                 }
                 if (due.Count == 0) continue;
 
@@ -180,5 +195,25 @@ public sealed class LiveWatcher(BacnetClient client, DiscoveredDevice device, De
             }
         }
         return null;
+    }
+
+    /// <summary>The device is answering polls again: ask once more for COV on the points that lost it because it went quiet.</summary>
+    private async Task ResubscribeAsync(CovSession cov, CancellationToken ct)
+    {
+        List<BacnetObjectId> again;
+        lock (_lock)
+        {
+            again = [.. _retryCov];
+            _retryCov.Clear();
+        }
+        if (again.Count == 0) return;
+
+        var result = await cov.SubscribeAsync(again, ct);
+        lock (_lock)
+        {
+            foreach (var id in result.Subscribed) _covSet.Add(id);
+            foreach (var id in result.Retryable) _retryCov.Add(id);
+            if (result.Subscribed.Count > 0 || result.DeviceWideReason is not null) _deviceWideRefusal = result.DeviceWideReason;
+        }
     }
 }

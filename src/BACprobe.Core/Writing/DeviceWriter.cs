@@ -119,8 +119,7 @@ public sealed record WriteErrorText(string Summary, string Cause, string NextSte
 
 public static class WriteErrors
 {
-    public static bool IsTimeout(Exception ex) =>
-        ex is TimeoutException || ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase);
+    public static bool IsTimeout(Exception ex) => BacnetFailure.IsTimeout(ex);
 
     /// <summary>Map the library's plain exceptions to a likely cause and a next step.</summary>
     public static WriteErrorText Explain(Exception ex)

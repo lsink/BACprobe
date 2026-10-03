@@ -7,13 +7,15 @@ namespace BACprobe.Core.Live;
 /// <param name="StopTrying">True when the answer applies to the whole device (no COV at all, or out of slots), so the remaining points are not worth asking about.</param>
 public sealed record CovRefusal(string Reason, bool StopTrying)
 {
+    public static bool IsTimeout(Exception ex) => BacnetFailure.IsTimeout(ex);
+
     /// <summary>Map the library's plain exceptions to a short reason. Unrecognised errors keep their text so nothing is hidden.</summary>
     public static CovRefusal Explain(Exception ex)
     {
         var m = ex.Message;
         bool Has(string s) => m.Contains(s, StringComparison.OrdinalIgnoreCase);
 
-        if (ex is TimeoutException || Has("timeout"))
+        if (IsTimeout(ex))
             return new("the device did not answer the subscription", StopTrying: false);
         if (Has("SERVICE_REQUEST_DENIED") || Has("OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED") || Has("REJECT") || Has("UNRECOGNIZED_SERVICE"))
             return new("the device does not support COV", StopTrying: true);
