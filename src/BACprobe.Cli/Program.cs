@@ -14,7 +14,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -56,6 +56,8 @@ internal static partial class Program
                    --no-cov makes the last device refuse COV; --cov-limit n makes every device accept only n subscriptions.
                    --router "1001:3" adds a router to network 1001 with 3 virtual devices (visible, not readable); commas add networks,
                    semicolons add routers, e.g. --router "1001:3,1002:0;1001:1".
+                   --stuck holds Occupied (bv:1) at priority 5, so writes at 8 are accepted but ignored; --protected makes Zone Setpoint
+                   (av:1) refuse writes. (The damper always limits itself to 0-100.)
                    --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
@@ -216,7 +218,7 @@ internal static partial class Program
             for (var i = 0; i < count; i++)
             {
                 var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
-                var sim = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)(first + i)), supportRpm: !legacy, drift: !opts.ContainsKey("still"),
+                var sim = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)(first + i), null, stuck: opts.ContainsKey("stuck"), protectedSetpoint: opts.ContainsKey("protected")), supportRpm: !legacy, drift: !opts.ContainsKey("still"),
                     supportCov: !(opts.ContainsKey("no-cov") && i == count - 1), covLimit: IntOpt(opts, "cov-limit", 0))
                 {
                     Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),

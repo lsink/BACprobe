@@ -116,6 +116,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: the write/release confirmation dialog; true if the user confirmed.</summary>
     public Func<WriteRequest, bool> ConfirmWrite { get; set; } = _ => false;
 
+    /// <summary>Shows why a write was refused, or why it had no effect. Set by the window.</summary>
+    public Action<PromptContent> ShowExplanation { get; set; } = _ => { };
+
     /// <summary>Set by the window: shows a Save dialog (suggested file name in); null if the user cancels.</summary>
     public Func<string, (string Path, ExportFormat Format)?> PickExportFile { get; set; } = _ => null;
 
@@ -914,9 +917,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         var outcome = await _writer.ExecuteAsync(request);
-        Status = outcome.Success
-            ? (release ? "Released." : "Written. The override stays in place until you release it.")
-            : outcome.Message.Replace("\n", " ");
+        Status = !outcome.Success ? outcome.Message.Replace("\n", " ")
+            : outcome.Explanation is not null ? "The device accepted the write, but the point did not change."
+            : release ? "Released." : "Written. The override stays in place until you release it.";
+        if (outcome.Explanation is { } explanation) ShowExplanation(explanation);
         UpdateOverrideSummary();
 
         try

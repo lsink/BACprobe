@@ -35,6 +35,7 @@ public sealed class SimulatedDeviceModel
     }
 
     private readonly Dictionary<BacnetObjectId, SimObject> _objects = [];
+    private readonly HashSet<BacnetObjectId> _locked = [];
     private readonly Lock _lock = new();
     private readonly SimObject _device;
 
@@ -123,6 +124,16 @@ public sealed class SimulatedDeviceModel
     }
 
     private readonly List<(BacnetObjectId Input, BacnetObjectId Output)> _followers = [];
+
+    /// <summary>Make a commandable point refuse every write, like one protected by a lock or permission.</summary>
+    public void Lock(BacnetObjectId id) => _locked.Add(id);
+
+    /// <summary>Pre-load an override into a priority slot, as if someone (or a program) had already commanded the point.</summary>
+    public void PreOverride(BacnetObjectId id, int priority, BacnetValue value)
+    {
+        lock (_lock)
+            if (_objects.TryGetValue(id, out var o) && o.Priority is not null) o.Priority[priority - 1] = value;
+    }
 
     /// <summary>Make an input mirror an output, like a fan proof switch following the fan command.</summary>
     public void AddFollower(BacnetObjectId input, BacnetObjectId output) => _followers.Add((input, output));
@@ -279,7 +290,7 @@ public sealed class SimulatedDeviceModel
     }
 
     /// <summary>A small but realistic VAV-style point set. Values vary a little with the instance so devices are distinguishable.</summary>
-    public static SimulatedDeviceModel CreateSample(uint instance, string? name = null)
+    public static SimulatedDeviceModel CreateSample(uint instance, string? name = null, bool stuck = false, bool protectedSetpoint = false)
     {
         var m = new SimulatedDeviceModel(instance, name ?? $"SIM-VAV-{instance}", "BACprobe Simulator", 999,
             "SimVAV-100", "1.0.0");
@@ -288,10 +299,16 @@ public sealed class SimulatedDeviceModel
         m.AddAnalogInput(2, "Discharge Air Temp", "Discharge air temperature", 55.2f, BacnetUnitsId.UNITS_DEGREES_FAHRENHEIT);
         m.AddAnalogValue(1, "Zone Setpoint", "Occupied cooling setpoint", 72f, BacnetUnitsId.UNITS_DEGREES_FAHRENHEIT);
         m.AddAnalogOutput(1, "Damper Position", "Supply damper command", 50f, BacnetUnitsId.UNITS_PERCENT);
+        var damper = new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, 1);
+        Set(m._objects[damper], BacnetPropertyIds.PROP_MIN_PRES_VALUE, Real(0f)); // a damper position is 0 to 100 %
+        Set(m._objects[damper], BacnetPropertyIds.PROP_MAX_PRES_VALUE, Real(100f));
         m.AddBinaryInput(1, "Fan Status", "Supply fan proof", true);
         m.AddBinaryValue(1, "Occupied", "Occupancy mode", true);
         m.AddBinaryOutput(1, "Fan Command", "Supply fan start/stop", false);
         m.AddFollower(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_INPUT, 1), new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_OUTPUT, 1));
+        // Troublemakers for testing the write explainer: a point already held at a high priority, and one that refuses writes.
+        if (stuck) m.PreOverride(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_VALUE, 1), 5, Enum(1));
+        if (protectedSetpoint) m.Lock(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1));
         // Trend logs: a new record every 10 s so they visibly grow while you watch (real logs are usually 1 to 15 minutes).
         m.AddTrendLog(1, "Zone Temp Trend", "Zone temperature history", new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1),
             TimeSpan.FromSeconds(10), historyRecords: 300);
@@ -412,7 +429,24 @@ public sealed class SimulatedDeviceModel
                 return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
             }
 
+            if (_locked.Contains(id))
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
+
             var relinquish = value.Tag == BacnetApplicationTags.BACNET_APPLICATION_TAG_NULL;
+            if (!relinquish)
+            {
+                // A real controller checks the kind of value and its limits before accepting a write.
+                var wantsReal = id.type is BacnetObjectTypes.OBJECT_ANALOG_OUTPUT or BacnetObjectTypes.OBJECT_ANALOG_VALUE;
+                var wantsEnum = id.type is BacnetObjectTypes.OBJECT_BINARY_OUTPUT or BacnetObjectTypes.OBJECT_BINARY_VALUE;
+                if ((wantsReal && value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_REAL)
+                    || (wantsEnum && value.Tag != BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED))
+                    return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_INVALID_DATA_TYPE);
+                if (wantsReal && value.Value is float f
+                    && o.Props.TryGetValue(BacnetPropertyIds.PROP_MIN_PRES_VALUE, out var lo) && lo is [{ Value: float min }]
+                    && o.Props.TryGetValue(BacnetPropertyIds.PROP_MAX_PRES_VALUE, out var hi) && hi is [{ Value: float max }]
+                    && (f < min || f > max))
+                    return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_VALUE_OUT_OF_RANGE);
+            }
             o.Priority[p - 1] = relinquish ? null : value;
             summary = relinquish ? $"relinquished priority {p}" : $"wrote {value.Value} at priority {p}";
             return null;

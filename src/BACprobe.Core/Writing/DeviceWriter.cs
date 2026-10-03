@@ -3,7 +3,11 @@ using BACprobe.Core.Discovery;
 
 namespace BACprobe.Core.Writing;
 
-public sealed record WriteOutcome(bool Success, string Message);
+/// <param name="Explanation">
+/// Set when something deserves a proper explanation: the device refused, or accepted the write but the point did not change.
+/// Null for a write that worked.
+/// </param>
+public sealed record WriteOutcome(bool Success, string Message, PromptContent? Explanation = null);
 
 /// <summary>
 /// Sends writes and releases, logs every attempt, and tracks the overrides left in place.
@@ -32,17 +36,59 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
                 tracker.Record(new TrackedOverride(request.Device, request.DeviceName, request.Point, request.ObjectName,
                     request.Priority, request.ValueText));
 
-            var msg = request.IsRelease ? "released" : "device accepted the write";
+            if (request.IsRelease)
+            {
+                Record(request, action, true, "released");
+                return new WriteOutcome(true, "released");
+            }
+
+            // The device said yes. That does not mean the point changed (a higher priority may be holding it): look.
+            var probe = await VerifyAsync(request, ct);
+            var explanation = WriteExplainer.ExplainIneffective(request, probe);
+            var msg = explanation is not null ? $"accepted, but it had no effect: {explanation.Headline.ToLowerInvariant()}"
+                : probe.Reachable ? "device accepted the write"
+                : "device accepted the write (the point could not be read back to check)";
             Record(request, action, true, msg);
-            return new WriteOutcome(true, msg);
+            return new WriteOutcome(true, msg, explanation);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             var text = WriteErrors.Explain(ex);
             Record(request, action, false, text.Summary);
-            return new WriteOutcome(false, text.Full);
+
+            // Find out why: look at the point, then explain what we found.
+            PointProbe? probe = null;
+            try
+            {
+                using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                limit.CancelAfter(TimeSpan.FromSeconds(4));
+                probe = await new PointProber(client, request.Device).ProbeAsync(request.Point, limit.Token);
+            }
+            catch (Exception) { /* the explanation says it could not check */ }
+            return new WriteOutcome(false, text.Full, WriteExplainer.ExplainFailure(request, ex.Message, probe));
         }
     }
+
+    /// <summary>Read the point back until it shows the written value, for up to <see cref="VerifyFor"/> (controllers update on their own schedule).</summary>
+    private async Task<PointProbe> VerifyAsync(WriteRequest request, CancellationToken ct)
+    {
+        var prober = new PointProber(client, request.Device);
+        var deadline = DateTime.UtcNow + VerifyFor;
+        PointProbe probe;
+        do
+        {
+            probe = await prober.ProbeAsync(request.Point, ct);
+            if (!probe.Reachable || WriteExplainer.IsEffective(request, probe)) return probe;
+            await Task.Delay(VerifyEvery, ct);
+        }
+        while (DateTime.UtcNow < deadline);
+        return await prober.ProbeAsync(request.Point, ct); // one last look
+    }
+
+    /// <summary>How long to wait for a slow controller to show the new value before calling the write ineffective.</summary>
+    public TimeSpan VerifyFor { get; set; } = TimeSpan.FromSeconds(3);
+
+    public TimeSpan VerifyEvery { get; set; } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Release every override this session left in place. Returns (released, failed).</summary>
     public async Task<(int Released, int Failed)> ReleaseAllAsync(CancellationToken ct = default)

@@ -75,6 +75,8 @@ Point search: `Search/PointSearch` (pure; all words must match, name hits rank f
 
 Routers / network map: `AddressInfo` (the library reports a device behind a router as the ROUTER's address (net 0) plus `RoutedSource` holding the real network and MAC; always go through `AddressInfo`, never `adr.net`); an I-Am-Router-To-Network body is big-endian uint16 network numbers; `DiscoveryService.AskForRouters` sends Who-Is-Router; `NetworkMapBuilder` is pure. `SimulatedRouter` (`--router "1001:3,1002:0;1001:1"`) makes routed devices that are discoverable but NOT readable. Known gap: job files do not store `RoutedSource`, so a reloaded job cannot talk to a routed device (jobs are offline anyway).
 
+Write explainer: `DeviceWriter.ExecuteAsync` returns `WriteOutcome.Explanation` (a `PromptContent`). After an accepted write it re-reads the point for up to 3 s (`PointProber`) and `WriteExplainer.ExplainIneffective` names why nothing changed; after a refusal it probes once and `ExplainFailure` explains. Pure logic in `WriteExplainer`; simulator can misbehave via `--stuck` (bv:1 held at priority 5) and `--protected` (av:1 refuses); the damper (ao:1) enforces 0-100. Unverified against real hardware.
+
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.

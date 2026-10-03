@@ -71,9 +71,18 @@ internal static partial class Program
 
         var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
         var outcome = await writer.ExecuteAsync(request);
-        if (!outcome.Success) return Fail(outcome.Message);
+        if (!outcome.Success)
+        {
+            if (outcome.Explanation is { } why) PrintExplanation(why);
+            return Fail("The write did not go through.");
+        }
 
-        Console.WriteLine(release ? "Released." : "Done - the device accepted the write.");
+        if (outcome.Explanation is { } ineffective)
+        {
+            Console.WriteLine("The device accepted the write, but it did not take effect.\n");
+            PrintExplanation(ineffective);
+        }
+        else Console.WriteLine(release ? "Released." : "Done - the device accepted the write.");
         try
         {
             var after = await browser.ReadPropertyAsync(id, BacnetPropertyIds.PROP_PRESENT_VALUE);
@@ -88,6 +97,15 @@ internal static partial class Program
                               $"  bacprobe release --device {device.InstanceId} --object {spec} --priority {priority}");
         Console.WriteLine($"Logged to {WriteLog.DefaultPath}");
         return 0;
+    }
+
+    private static void PrintExplanation(PromptContent c)
+    {
+        Console.WriteLine(c.Headline);
+        foreach (var f in c.Facts) Console.WriteLine($"  {f.Label + ":",-20}{f.Value}");
+        Console.WriteLine("\n" + c.Body);
+        if (c.Warning is not null) Console.WriteLine("\nWARNING: " + c.Warning);
+        Console.WriteLine();
     }
 
     private static async Task<PropertyRow?> TryReadAsync(DeviceBrowser browser, BacnetObjectId id, BacnetPropertyIds prop)

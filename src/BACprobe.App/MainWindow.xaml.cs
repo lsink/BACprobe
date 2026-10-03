@@ -33,6 +33,7 @@ public partial class MainWindow : Window
                     return false;
                 }
             };
+            vm.ShowExplanation = content => PromptWindow.Show(this, content, [new PromptButton("OK", IsCancel: true)]);
             vm.AskOverrides = overrides => PromptWindow.Show(this, Prompts.OverridesInPlace(overrides),
                 overrides.Count == 1
                     ? [new PromptButton("Release it"), new PromptButton("Leave it in place"), new PromptButton("Go back", IsCancel: true)]
