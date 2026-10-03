@@ -6,7 +6,12 @@
     <RootNamespace>BACprobe.App</RootNamespace>
     <!-- ThemeMode (Fluent) is experimental in .NET 9/10 -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+    <Resource Include="Assets\app.png" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <ProjectReference Include="..\BACprobe.Core\BACprobe.Core.csproj" />
