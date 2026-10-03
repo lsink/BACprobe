@@ -273,9 +273,12 @@
         <!-- Live values: refresh the point list by itself -->
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
           <TextBlock Text="{Binding LiveStatus}" Opacity="0.75" VerticalAlignment="Center" Margin="0,0,10,0" />
+          <CheckBox Content="COV" IsChecked="{Binding UseCov}" Margin="0,0,10,0" VerticalAlignment="Center"
+                    AutomationProperties.Name="Use COV"
+                    ToolTip="Ask the device to push changes to us (change-of-value). Points or devices that refuse are polled instead. Untick to poll everything." />
           <ComboBox ItemsSource="{Binding LiveIntervals}" SelectedItem="{Binding LiveIntervalSeconds}" ItemStringFormat="{}{0} s"
                     Width="70" Margin="0,0,6,0" AutomationProperties.Name="Live refresh interval"
-                    ToolTip="How often to re-read the values while Live values is on." />
+                    ToolTip="How often to re-read points that are polled (all of them if COV is off)." />
           <ToggleButton Content="Live values" IsChecked="{Binding IsLive}" IsEnabled="{Binding CanUseLive}" Padding="12,4"
                         AutomationProperties.Name="Live values"
                         ToolTip="Keep the point list up to date, so you can watch values change and see overrides appear. Needs a live connection." />

@@ -1,10 +1,11 @@
 using BACprobe.Core.Browsing;
+using BACprobe.Core.Live;
 
 namespace BACprobe.Cli;
 
 internal static partial class Program
 {
-    /// <summary>Print a line whenever a point's value or override changes. Ctrl+C to stop.</summary>
+    /// <summary>Print a line whenever a point's value or override changes. Uses COV where the device supports it. Ctrl+C to stop.</summary>
     private static async Task<int> WatchAsync(Dictionary<string, string?> opts)
     {
         var interval = IntOpt(opts, "interval", 2);
@@ -36,42 +37,43 @@ internal static partial class Program
         }
 
         var watched = points.Where(p => BacnetNames.HasLivePresentValue(p.Id.type)).ToList();
-        Console.WriteLine($"Watching {watched.Count} point(s) on device {device.InstanceId} every {interval}s. Ctrl+C to stop.");
+        var useCov = !opts.ContainsKey("poll");
+        Console.WriteLine($"Watching {watched.Count} point(s) on device {device.InstanceId}{(useCov ? " (COV where supported)" : " (polling)")}. Ctrl+C to stop.");
+
+        var last = watched.ToDictionary(p => p.Id, p => (Value: p.ValueText, Override: p.OverrideText));
         foreach (var p in watched)
             Console.WriteLine($"  {BacnetNames.ObjectTypeShort(p.Id.type)} {p.Id.instance,-3} {p.Name,-22} {p.ValueText}{(p.IsOverridden ? $"   [override {p.OverrideText}]" : "")}");
 
+        var watcher = svc.CreateLiveWatcher(device, watched, new LiveOptions(TimeSpan.FromSeconds(interval), useCov) { CovLifetimeSeconds = (uint)IntOpt(opts, "cov-lifetime", 300) });
+        var lastMode = "";
+        var modeLock = new object();
+        watcher.StatusChanged += text =>
+        {
+            var mode = text.Split("  (updated")[0]; // only print when the way points are being kept current changes
+            lock (modeLock)
+            {
+                if (mode == lastMode) return;
+                lastMode = mode;
+                Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {mode}");
+            }
+        };
+        watcher.PointChanged += p =>
+        {
+            (string Value, string Override) before;
+            lock (last) before = last[p.Id];
+            var now = (Value: p.ValueText, Override: p.OverrideText);
+            if (now == before) return;
+            lock (last) last[p.Id] = now;
+            var note = now.Override != before.Override
+                ? (p.IsOverridden ? $"   [override now {p.OverrideText}]" : "   [override released]")
+                : "";
+            var change = before.Value == p.ValueText ? p.ValueText : $"{before.Value} -> {p.ValueText}";
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {BacnetNames.ObjectTypeShort(p.Id.type)} {p.Id.instance,-3} {p.Name,-22} {change}{note}");
+        };
+
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(interval));
-        var failures = 0;
-        try
-        {
-            while (await timer.WaitForNextTickAsync(cts.Token))
-            {
-                try
-                {
-                    var before = watched.ToDictionary(p => p.Id, p => (p.ValueText, p.OverrideText));
-                    var changed = await browser.RefreshValuesAsync(watched, cts.Token);
-                    failures = 0;
-                    foreach (var p in changed)
-                    {
-                        var (oldValue, oldOverride) = before[p.Id];
-                        var note = p.OverrideText != oldOverride
-                            ? (p.IsOverridden ? $"   [override now {p.OverrideText}]" : "   [override released]")
-                            : "";
-                        Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {BacnetNames.ObjectTypeShort(p.Id.type)} {p.Id.instance,-3} {p.Name,-22} {oldValue} -> {p.ValueText}{note}");
-                    }
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    if (++failures >= 3)
-                        return Fail("Lost the device (3 failed refreshes in a row).\n" + ReadFailure(ex));
-                    Console.WriteLine($"{DateTime.Now:HH:mm:ss}  (no answer, will retry)");
-                }
-            }
-        }
-        catch (OperationCanceledException) { }
-        return 0;
+        var failure = await watcher.RunAsync(cts.Token);
+        return failure is null ? 0 : Fail(failure);
     }
 }

@@ -13,7 +13,7 @@ It has not yet been run against real controllers. Expect rough edges, and please
 - **Discovery** - Who-Is (optionally an instance range), then reads name, vendor, model and firmware for each device.
 - **Object browser** - object list with names, values and units; every property of an object. Vendor-specific
   properties and object types are shown as "vendor-specific" with raw values, never hidden.
-- **Live values** - switch on "Live values" and the point list refreshes itself (every 1, 2, 5 or 10 s), so you can watch a damper move, see a write take effect, or catch someone else's override appear. Changed values flash blue. It polls; COV subscriptions are not used yet.
+- **Live values** - switch on "Live values" and the point list keeps itself up to date, so you can watch a damper move, see a write take effect, or catch someone else's override appear. It asks the device to push changes (COV) and polls only the points or devices that refuse; changed values flash blue. Subscriptions are renewed automatically, and a slow safety poll catches anything missed.
 - **Override indicator** - points held at manual-operator priority (8) or higher show in orange with the priority, whoever set the override.
 - **Safe writes** - a confirmation in plain English that names the priority (8 = Manual Operator is the default),
   a write log, and a prompt before you disconnect that lists the overrides you left in place and offers to release them.
@@ -26,7 +26,7 @@ Fully local: no cloud calls, no telemetry.
 
 ## Not yet
 - MS/TP (needs an FTDI USB-RS485 adapter; planned for a later phase)
-- COV subscriptions (live values poll instead), trend logs, schedules
+- Trend logs, schedules
 - Writes to properties other than Present Value
 - EDE state-text, limit and COV columns (left empty); the EDE layout has not been checked against a real EDE consumer
 
@@ -54,12 +54,12 @@ dotnet run --project src/BACprobe.Cli -- discover
 | `adapters` / `preflight` | List network adapters; run the pre-flight checks |
 | `discover [--bbmd <ip>]` | Find devices |
 | `objects --device <n>` | List a device's objects with values |
-| `watch --device <n> [--object ai:1] [--interval 2]` | Print a line whenever a value or override changes |
+| `watch --device <n> [--object ai:1] [--poll]` | Print a line whenever a value or override changes (COV where supported) |
 | `read --device <n> --object ai:1 [--property present-value]` | Read all (or one) property of a point |
 | `write` / `release --device <n> --object ao:1 --value 25 [--priority 8]` | Override a point / give it back (asks to confirm) |
 | `export (--device <n> \| --all \| --job <file>) [--format csv\|xlsx\|ede]` | Save a point list |
 | `job save --out site.bacprobe --all` / `job show site.bacprobe` | Save and browse a site visit |
-| `simulate [--devices n] [--no-rpm] [--bbmd]` | Run fake devices (and a fake BBMD) |
+| `simulate [--devices n] [--no-rpm] [--no-cov] [--cov-limit n] [--bbmd]` | Run fake devices (and a fake BBMD) |
 
 Run `bacprobe --help` for every option. Write history is also appended to `%LOCALAPPDATA%\BACprobe\write-log.txt`.
 

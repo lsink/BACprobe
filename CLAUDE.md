@@ -64,7 +64,7 @@ Core layout (`src/BACprobe.Core`): `Networking` (adapters, pre-flight rules, por
 `Bbmd` (foreign-device registration), `Export` (CSV/xlsx/EDE), `Jobs` (SQLite `.bacprobe`), `Simulation`.
 CLI commands: adapters, preflight, discover, objects, read, write, release, export, job (save|show), simulate.
 
-Phase 2 started: live values (`DeviceBrowser.RefreshValuesAsync`, polling; app toggle + `bacprobe watch`). The simulator now drifts analog inputs and Fan Status follows Fan Command (`--still` turns that off). COV is the obvious next step.
+Phase 2 started: live values. `Live/LiveWatcher` keeps a device current with COV (`CovSession`: unconfirmed subscriptions, renewed at half the lifetime, cancelled on exit) and polls points the device refuses (`DeviceBrowser.RefreshValuesAsync`), plus a 30 s safety poll (notifications can be lost, devices forget subscriptions on restart, and COV does not carry priority arrays). App toggle + `bacprobe watch`. The simulator supports COV (`--no-cov` makes the last device refuse, `--cov-limit n` caps subscriptions) and drifts analog inputs (`--still` stops that). Subscription process ids come from one process-wide counter: the device keys on (subscriber, id, object).
 
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).

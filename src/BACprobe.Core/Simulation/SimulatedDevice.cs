@@ -1,11 +1,13 @@
+using System.Globalization;
 using System.IO.BACnet;
+using System.IO.BACnet.Serialize;
 using BACprobe.Core.Networking;
 
 namespace BACprobe.Core.Simulation;
 
 /// <summary>
 /// A fake BACnet/IP device for testing without hardware. Answers Who-Is, ReadProperty, ReadPropertyMultiple
-/// and WriteProperty from a <see cref="SimulatedDeviceModel"/>.
+/// WriteProperty and SubscribeCOV from a <see cref="SimulatedDeviceModel"/>.
 /// </summary>
 public sealed class SimulatedDevice : IDisposable
 {
@@ -14,16 +16,39 @@ public sealed class SimulatedDevice : IDisposable
     private readonly bool _drift;
     private readonly Random _rng = new();
     private Timer? _driftTimer;
+    private Timer? _covTimer;
+    private readonly bool _supportCov;
+    private readonly int _covLimit;
+    private readonly List<CovSub> _subs = [];
+    private readonly Lock _subsLock = new();
+
+    /// <summary>Analog points notify when they move by at least this much (the COV increment).</summary>
+    private const double CovIncrement = 0.2;
+
+    private sealed class CovSub(BacnetAddress subscriber, uint process, BacnetObjectId obj)
+    {
+        public BacnetAddress Subscriber { get; } = subscriber;
+        public uint Process { get; } = process;
+        public BacnetObjectId Object { get; } = obj;
+        public bool Confirmed { get; set; }
+        public DateTime? Expiry { get; set; }
+        public string? LastText { get; set; }
+        public double? LastNumber { get; set; }
+    }
 
     public SimulatedDeviceModel Model { get; }
     public Action<string>? Log { get; set; }
 
     /// <param name="supportRpm">False mimics older devices that refuse ReadPropertyMultiple, to exercise the fallback.</param>
+    /// <param name="supportCov">False mimics a device with no change-of-value support, to exercise the polling fallback.</param>
+    /// <param name="covLimit">Maximum number of subscriptions the device will accept (0 = no limit), like a real controller running out of slots.</param>
     public SimulatedDevice(AdapterInfo adapter, SimulatedDeviceModel model, bool supportRpm = true, int port = PreflightRules.BacnetPort,
-        bool drift = true)
+        bool drift = true, bool supportCov = true, int covLimit = 0)
     {
         Model = model;
         _drift = drift;
+        _supportCov = supportCov;
+        _covLimit = covLimit;
         _supportRpm = supportRpm;
         var transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
             localEndpointIp: adapter.Address.ToString());
@@ -32,6 +57,7 @@ public sealed class SimulatedDevice : IDisposable
         _client.OnReadPropertyRequest += OnReadProperty;
         _client.OnReadPropertyMultipleRequest += OnReadPropertyMultiple;
         _client.OnWritePropertyRequest += OnWriteProperty;
+        _client.OnSubscribeCOV += OnSubscribeCov;
     }
 
     public void Start()
@@ -39,6 +65,7 @@ public sealed class SimulatedDevice : IDisposable
         _client.Start();
         _client.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_NONE); // announce, like a device powering up
         if (_drift) _driftTimer = new Timer(_ => Model.Tick(_rng), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        _covTimer = new Timer(_ => CheckCov(), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
     }
 
     private void OnWhoIs(BacnetClient sender, BacnetAddress adr, int low, int high)
@@ -114,6 +141,8 @@ public sealed class SimulatedDevice : IDisposable
         {
             Log?.Invoke($"[{Model.Instance}] WriteProperty {objectId} {prop} from {adr}: {summary}");
             sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_WRITE_PROPERTY, invokeId);
+            Model.Tick(_rng); // let followers (e.g. Fan Status) catch up with the new command
+            CheckCov();
         }
         else
         {
@@ -122,9 +151,114 @@ public sealed class SimulatedDevice : IDisposable
         }
     }
 
+    private void OnSubscribeCov(BacnetClient sender, BacnetAddress adr, byte invokeId, uint process, BacnetObjectId objectId,
+        bool cancel, bool confirmed, uint lifetime, BacnetMaxSegments maxSegments)
+    {
+        if (!_supportCov)
+        {
+            Log?.Invoke($"[{Model.Instance}] SubscribeCOV {objectId} from {adr} -> refused (no COV support)");
+            sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_SUBSCRIBE_COV, invokeId,
+                BacnetErrorClasses.ERROR_CLASS_SERVICES, BacnetErrorCodes.ERROR_CODE_SERVICE_REQUEST_DENIED);
+            return;
+        }
+
+        CovSub? sub;
+        lock (_subsLock) sub = _subs.FirstOrDefault(x => x.Process == process && x.Object == objectId && x.Subscriber.ToString() == adr.ToString());
+
+        if (cancel)
+        {
+            lock (_subsLock) if (sub is not null) _subs.Remove(sub);
+            Log?.Invoke($"[{Model.Instance}] SubscribeCOV {objectId} from {adr} -> cancelled");
+            sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_SUBSCRIBE_COV, invokeId);
+            return;
+        }
+
+        if (!Model.TryRead(objectId, BacnetPropertyIds.PROP_PRESENT_VALUE, uint.MaxValue, out _, out var err))
+        {
+            // Unknown object, or an object (like the device itself) with no Present Value to report.
+            var code = err.Code == BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT
+                ? BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT
+                : BacnetErrorCodes.ERROR_CODE_NOT_COV_PROPERTY;
+            Log?.Invoke($"[{Model.Instance}] SubscribeCOV {objectId} from {adr} -> {code}");
+            sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_SUBSCRIBE_COV, invokeId, err.Class, code);
+            return;
+        }
+
+        var isNew = sub is null;
+        lock (_subsLock)
+        {
+            if (isNew && _covLimit > 0 && _subs.Count >= _covLimit)
+            {
+                Log?.Invoke($"[{Model.Instance}] SubscribeCOV {objectId} from {adr} -> refused (out of slots, limit {_covLimit})");
+                sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_SUBSCRIBE_COV, invokeId,
+                    BacnetErrorClasses.ERROR_CLASS_RESOURCES, BacnetErrorCodes.ERROR_CODE_NO_SPACE_TO_ADD_LIST_ELEMENT);
+                return;
+            }
+            sub ??= new CovSub(adr, process, objectId);
+            sub.Confirmed = confirmed;
+            sub.Expiry = lifetime == 0 ? null : DateTime.UtcNow.AddSeconds(lifetime);
+            if (isNew) _subs.Add(sub);
+        }
+
+        Log?.Invoke($"[{Model.Instance}] SubscribeCOV {objectId} from {adr} -> {(isNew ? "subscribed" : "renewed")} (lifetime {lifetime}s)");
+        sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_SUBSCRIBE_COV, invokeId);
+        if (isNew) SendNotification(sub, force: true); // the spec says: report the current value on subscribing
+    }
+
+    /// <summary>Send a notification for every subscription whose point moved enough since it was last reported.</summary>
+    private void CheckCov()
+    {
+        List<CovSub> subs;
+        lock (_subsLock)
+        {
+            _subs.RemoveAll(x => x.Expiry is { } e && e < DateTime.UtcNow);
+            subs = [.. _subs];
+        }
+        foreach (var sub in subs) SendNotification(sub, force: false);
+    }
+
+    private void SendNotification(CovSub sub, bool force)
+    {
+        if (!Model.TryRead(sub.Object, BacnetPropertyIds.PROP_PRESENT_VALUE, uint.MaxValue, out var pv, out _) || pv.Count == 0) return;
+
+        var text = Convert.ToString(pv[0].Value, CultureInfo.InvariantCulture);
+        double? number = pv[0].Value is float f ? f : null;
+        lock (_subsLock)
+        {
+            var changed = force
+                || (number is { } n && sub.LastNumber is { } last ? Math.Abs(n - last) >= CovIncrement : text != sub.LastText);
+            if (!changed) return;
+            sub.LastText = text;
+            sub.LastNumber = number;
+        }
+
+        var remaining = sub.Expiry is { } e ? (uint)Math.Max(0, (e - DateTime.UtcNow).TotalSeconds) : 0;
+        var values = new List<BacnetPropertyValue>
+        {
+            new() { property = new BacnetPropertyReference((uint)BacnetPropertyIds.PROP_PRESENT_VALUE, ASN1.BACNET_ARRAY_ALL), value = pv },
+            new()
+            {
+                property = new BacnetPropertyReference((uint)BacnetPropertyIds.PROP_STATUS_FLAGS, ASN1.BACNET_ARRAY_ALL),
+                value = [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt(0, 4))],
+            },
+        };
+        Log?.Invoke($"[{Model.Instance}] COV {sub.Object} = {text} -> {sub.Subscriber}");
+        _ = NotifyAsync(sub, remaining, values);
+    }
+
+    private async Task NotifyAsync(CovSub sub, uint remaining, List<BacnetPropertyValue> values)
+    {
+        try
+        {
+            await _client.NotifyAsync(sub.Subscriber, sub.Process, Model.Instance, sub.Object, remaining, sub.Confirmed, values);
+        }
+        catch (Exception) { /* a subscriber that has gone away; it will time out */ }
+    }
+
     public void Dispose()
     {
         _driftTimer?.Dispose();
+        _covTimer?.Dispose();
         _client.Dispose();
     }
 }

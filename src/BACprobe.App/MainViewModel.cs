@@ -7,6 +7,7 @@ using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Export;
 using BACprobe.Core.Jobs;
+using BACprobe.Core.Live;
 using BACprobe.Core.Networking;
 using BACprobe.Core.Writing;
 using System.IO.BACnet;
@@ -188,6 +189,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isLive;
     [ObservableProperty] private bool _canUseLive;
     [ObservableProperty] private int _liveIntervalSeconds = 2;
+    [ObservableProperty] private bool _useCov = true;
     [ObservableProperty] private string _liveStatus = "";
 
     partial void OnIsLiveChanged(bool value)
@@ -197,6 +199,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     partial void OnLiveIntervalSecondsChanged(int value)
+    {
+        if (IsLive) StartLive();
+    }
+
+    partial void OnUseCovChanged(bool value)
     {
         if (IsLive) StartLive();
     }
@@ -401,57 +408,49 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         LiveStatus = "";
     }
 
-    /// <summary>(Re)start refreshing the objects of the selected device. Does nothing until a device with objects is showing.</summary>
+    /// <summary>
+    /// (Re)start keeping the selected device's points current: COV where the device supports it, polling for the rest.
+    /// Does nothing until a device with objects is showing.
+    /// </summary>
     private void StartLive()
     {
         StopLive();
         if (!IsLive || _svc is null || SelectedDevice is null || Objects.Count == 0) return;
 
         var cts = _liveCts = new CancellationTokenSource();
-        _ = RunLiveAsync(_svc.OpenDevice(SelectedDevice.Device), Objects.ToList(), cts.Token);
+        var rows = Objects.ToDictionary(r => r.Summary); // keyed by the summary object itself
+        var watcher = _svc.CreateLiveWatcher(SelectedDevice.Device, [.. rows.Keys],
+            new LiveOptions(TimeSpan.FromSeconds(LiveIntervalSeconds), UseCov));
+
+        // The watcher reports from background threads (COV notifications arrive on the network thread): hop to the UI thread.
+        watcher.StatusChanged += text => PostUi(() =>
+        {
+            if (!cts.IsCancellationRequested) LiveStatus = text;
+        });
+        watcher.PointChanged += summary => PostUi(() =>
+        {
+            if (cts.IsCancellationRequested || !rows.TryGetValue(summary, out var row)) return;
+            row.Refresh(summary);
+            row.MarkChanged();
+            if (ReferenceEquals(SelectedObject, row)) UpdateOpenProperties(summary);
+            UpdateOverrideSummary();
+        });
+        _ = RunLiveAsync(watcher, cts.Token);
     }
 
-    private async Task RunLiveAsync(DeviceBrowser browser, List<ObjectRow> rows, CancellationToken ct)
+    private async Task RunLiveAsync(LiveWatcher watcher, CancellationToken ct)
     {
-        var failures = 0;
-        LiveStatus = $"Live: every {LiveIntervalSeconds} s";
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(LiveIntervalSeconds));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(ct))
-            {
-                try
-                {
-                    var changed = await browser.RefreshValuesAsync(rows.Select(r => r.Summary).ToList(), ct);
-                    failures = 0;
-                    foreach (var summary in changed)
-                    {
-                        var row = rows.First(r => ReferenceEquals(r.Summary, summary));
-                        row.Refresh(summary);
-                        row.MarkChanged();
-                        if (ReferenceEquals(SelectedObject, row)) UpdateOpenProperties(summary);
-                    }
-                    if (changed.Count > 0) UpdateOverrideSummary();
-                    LiveStatus = $"Live: updated {DateTime.Now:HH:mm:ss}";
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    if (++failures < 3)
-                    {
-                        LiveStatus = "Live: no answer, retrying...";
-                        continue;
-                    }
-                    // Three misses in a row: stop and say why, instead of showing stale numbers as if they were live.
-                    IsLive = false;
-                    Status = $"Live values stopped: the device did not answer 3 times in a row ({ex.Message}). " +
-                             "Likely cause: network drop, or the controller is busy or restarting. " +
-                             "Next step: check the connection, then switch Live values back on.";
-                    return;
-                }
-            }
-        }
-        catch (OperationCanceledException) { }
+        var failure = await watcher.RunAsync(ct);
+        if (failure is null || ct.IsCancellationRequested) return;
+        // The device stopped answering: stop and say why, instead of showing stale numbers as if they were live.
+        IsLive = false;
+        Status = failure;
+    }
+
+    private static void PostUi(Action a)
+    {
+        var d = Application.Current?.Dispatcher;
+        if (d is null) a(); else d.BeginInvoke(a);
     }
 
     /// <summary>Update the Present Value and Priority Array rows in place, so the properties panel does not flicker or lose its place.</summary>
