@@ -11,14 +11,19 @@ public sealed class SimulatedDevice : IDisposable
 {
     private readonly BacnetClient _client;
     private readonly bool _supportRpm;
+    private readonly bool _drift;
+    private readonly Random _rng = new();
+    private Timer? _driftTimer;
 
     public SimulatedDeviceModel Model { get; }
     public Action<string>? Log { get; set; }
 
     /// <param name="supportRpm">False mimics older devices that refuse ReadPropertyMultiple, to exercise the fallback.</param>
-    public SimulatedDevice(AdapterInfo adapter, SimulatedDeviceModel model, bool supportRpm = true, int port = PreflightRules.BacnetPort)
+    public SimulatedDevice(AdapterInfo adapter, SimulatedDeviceModel model, bool supportRpm = true, int port = PreflightRules.BacnetPort,
+        bool drift = true)
     {
         Model = model;
+        _drift = drift;
         _supportRpm = supportRpm;
         var transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
             localEndpointIp: adapter.Address.ToString());
@@ -33,6 +38,7 @@ public sealed class SimulatedDevice : IDisposable
     {
         _client.Start();
         _client.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_NONE); // announce, like a device powering up
+        if (_drift) _driftTimer = new Timer(_ => Model.Tick(_rng), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private void OnWhoIs(BacnetClient sender, BacnetAddress adr, int low, int high)
@@ -116,5 +122,9 @@ public sealed class SimulatedDevice : IDisposable
         }
     }
 
-    public void Dispose() => _client.Dispose();
+    public void Dispose()
+    {
+        _driftTimer?.Dispose();
+        _client.Dispose();
+    }
 }

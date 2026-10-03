@@ -87,6 +87,17 @@ public class OverrideTests
     }
 
     [Fact]
+    public void Describing_slots_matches_the_properties_panel_wording()
+    {
+        var values = Array16((8, 25f), (16, 50f));
+        var fromValues = BacnetNames.FormatValues(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, BacnetPropertyIds.PROP_PRIORITY_ARRAY, values);
+        var fromSlots = PriorityArrayInfo.DescribeSlots(PriorityArrayInfo.Occupied(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, values));
+        Assert.Equal(fromValues, fromSlots);
+        Assert.Equal(BacnetNames.FormatValues(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, BacnetPropertyIds.PROP_PRIORITY_ARRAY, Array16()),
+            PriorityArrayInfo.DescribeSlots([]));
+    }
+
+    [Fact]
     public void Point_driven_only_at_program_priority_is_not_flagged()
     {
         var s = new ObjectSummary { Id = Ao1, PrioritySlots = PriorityArrayInfo.Occupied(Ao1.type, Array16((16, 50f))) };

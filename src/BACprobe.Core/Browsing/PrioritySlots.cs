@@ -36,5 +36,9 @@ public static class PriorityArrayInfo
         return slots;
     }
 
+    /// <summary>The text shown for a priority array, built from its occupied slots (same wording as the properties panel).</summary>
+    public static string DescribeSlots(IReadOnlyList<PrioritySlot> slots) =>
+        slots.Count == 0 ? "no overrides (all 16 slots empty)" : string.Join("; ", slots.Select(s => s.Description));
+
     public static bool IsOverride(IReadOnlyList<PrioritySlot> slots) => slots.Any(s => s.Priority <= OverrideCeiling);
 }

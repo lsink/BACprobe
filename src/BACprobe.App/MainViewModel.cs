@@ -59,6 +59,24 @@ public sealed class ObjectRow(ObjectSummary s) : ObservableObject
     public string Override => _s.OverrideText;
     public string OverrideTooltip => _s.OverrideTooltip;
 
+    private bool _recentlyChanged;
+
+    /// <summary>True for a moment after a live refresh changed this point, so the eye can find it.</summary>
+    public bool RecentlyChanged
+    {
+        get => _recentlyChanged;
+        private set => SetProperty(ref _recentlyChanged, value);
+    }
+
+    public void MarkChanged() => _ = FlashAsync();
+
+    private async Task FlashAsync()
+    {
+        RecentlyChanged = true;
+        await Task.Delay(1500);
+        RecentlyChanged = false;
+    }
+
     /// <summary>Swap in freshly read values (e.g. after a write) without losing the grid selection.</summary>
     public void Refresh(ObjectSummary fresh)
     {
@@ -164,6 +182,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private string _preflightSummary = "";
     [ObservableProperty] private bool _preflightExpanded = true;
+    // Live values: the object list refreshes itself on a timer.
+    private CancellationTokenSource? _liveCts;
+    public IReadOnlyList<int> LiveIntervals { get; } = [1, 2, 5, 10];
+    [ObservableProperty] private bool _isLive;
+    [ObservableProperty] private bool _canUseLive;
+    [ObservableProperty] private int _liveIntervalSeconds = 2;
+    [ObservableProperty] private string _liveStatus = "";
+
+    partial void OnIsLiveChanged(bool value)
+    {
+        if (value) StartLive();
+        else StopLive();
+    }
+
+    partial void OnLiveIntervalSecondsChanged(int value)
+    {
+        if (IsLive) StartLive();
+    }
+
     [ObservableProperty] private string _jobName = "";
     [ObservableProperty] private string _jobNotes = "";
     [ObservableProperty] private string _offlineBanner = "";
@@ -249,6 +286,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (!await ResolveOverridesAsync()) return;
 
         IsScanning = true;
+        StopLive();
+        CanUseLive = false;
         ResetBrowsing();
         OfflineBanner = "";
         Status = "Sending Who-Is...";
@@ -261,6 +300,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             svc.Start();
             _svc = svc;
             _writer = svc.CreateWriter(_log, _overrides);
+            CanUseLive = true;
             BbmdStatus = "";
             if (bbmd is not null)
             {
@@ -310,7 +350,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async Task LoadObjectsAsync(DeviceRow? row)
     {
         _browseCts?.Cancel();
+        StopLive();
         Objects.Clear();
+        UpdateOverrideSummary();
         Properties.Clear();
         PropertiesHeader = "Properties";
         ExportSelectedCommand.NotifyCanExecuteChanged();
@@ -340,6 +382,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             foreach (var s in summaries) Objects.Add(new ObjectRow(s));
             ExportSelectedCommand.NotifyCanExecuteChanged();
             Status = $"{ids.Count} objects in {name}. Select one to see its properties.";
+            UpdateOverrideSummary();
+            if (IsLive) StartLive();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -347,6 +391,79 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (!cts.IsCancellationRequested)
                 Status = $"Could not read {name}: {ex.Message}. Likely cause: network drop, a busy controller, or a router dropping the request. " +
                          "Next step: check the connection and select the device again.";
+        }
+    }
+
+    private void StopLive()
+    {
+        _liveCts?.Cancel();
+        _liveCts = null;
+        LiveStatus = "";
+    }
+
+    /// <summary>(Re)start refreshing the objects of the selected device. Does nothing until a device with objects is showing.</summary>
+    private void StartLive()
+    {
+        StopLive();
+        if (!IsLive || _svc is null || SelectedDevice is null || Objects.Count == 0) return;
+
+        var cts = _liveCts = new CancellationTokenSource();
+        _ = RunLiveAsync(_svc.OpenDevice(SelectedDevice.Device), Objects.ToList(), cts.Token);
+    }
+
+    private async Task RunLiveAsync(DeviceBrowser browser, List<ObjectRow> rows, CancellationToken ct)
+    {
+        var failures = 0;
+        LiveStatus = $"Live: every {LiveIntervalSeconds} s";
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(LiveIntervalSeconds));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                try
+                {
+                    var changed = await browser.RefreshValuesAsync(rows.Select(r => r.Summary).ToList(), ct);
+                    failures = 0;
+                    foreach (var summary in changed)
+                    {
+                        var row = rows.First(r => ReferenceEquals(r.Summary, summary));
+                        row.Refresh(summary);
+                        row.MarkChanged();
+                        if (ReferenceEquals(SelectedObject, row)) UpdateOpenProperties(summary);
+                    }
+                    if (changed.Count > 0) UpdateOverrideSummary();
+                    LiveStatus = $"Live: updated {DateTime.Now:HH:mm:ss}";
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    if (++failures < 3)
+                    {
+                        LiveStatus = "Live: no answer, retrying...";
+                        continue;
+                    }
+                    // Three misses in a row: stop and say why, instead of showing stale numbers as if they were live.
+                    IsLive = false;
+                    Status = $"Live values stopped: the device did not answer 3 times in a row ({ex.Message}). " +
+                             "Likely cause: network drop, or the controller is busy or restarting. " +
+                             "Next step: check the connection, then switch Live values back on.";
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>Update the Present Value and Priority Array rows in place, so the properties panel does not flicker or lose its place.</summary>
+    private void UpdateOpenProperties(ObjectSummary s)
+    {
+        for (var i = 0; i < Properties.Count; i++)
+        {
+            var r = Properties[i];
+            if (r.PropertyId == (uint)BacnetPropertyIds.PROP_PRESENT_VALUE && s.PresentValue is not null)
+                Properties[i] = r with { Display = s.PresentValue };
+            else if (r.PropertyId == (uint)BacnetPropertyIds.PROP_PRIORITY_ARRAY)
+                Properties[i] = r with { Display = PriorityArrayInfo.DescribeSlots(s.PrioritySlots) };
         }
     }
 
@@ -359,6 +476,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
         foreach (var s in saved.Objects) Objects.Add(new ObjectRow(s));
+        UpdateOverrideSummary();
         ExportSelectedCommand.NotifyCanExecuteChanged();
         Status = $"{saved.Objects.Count} saved objects in {saved.Name}. These are the values from when the job was saved; Scan to read live.";
     }
@@ -534,6 +652,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         // Opening a job leaves live mode: close the connection and show the saved snapshot.
+        IsLive = false;
+        CanUseLive = false;
         _browseCts?.Cancel();
         _svc?.Dispose();
         _svc = null;
@@ -682,15 +802,24 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             var fresh = (await _svc.OpenDevice(deviceRow.Device).ReadSummariesAsync([obj.Id]))[0];
             row.Refresh(fresh);
+            UpdateOverrideSummary();
             await LoadPropertiesAsync(row);
         }
         catch (Exception) { Status += " (Could not read the point back; check it before you leave.)"; }
     }
 
+    /// <summary>
+    /// The footer: overrides this session made (the ones BACprobe will offer to release) plus any point on the
+    /// device being viewed that is overridden by anyone, so the footer never disagrees with the orange rows.
+    /// </summary>
     private void UpdateOverrideSummary()
     {
-        var n = _overrides.Active.Count;
-        OverrideSummary = n == 0 ? "No overrides in place." : $"{n} override(s) in place from this session.";
+        var mine = _overrides.Active.Count;
+        var onDevice = Objects.Count(o => o.IsOverridden);
+        var parts = new List<string>();
+        if (mine > 0) parts.Add($"{mine} override(s) from this session");
+        if (onDevice > 0) parts.Add($"{onDevice} point(s) overridden on this device");
+        OverrideSummary = parts.Count == 0 ? "No overrides in place." : string.Join("  |  ", parts);
     }
 
     /// <summary>
@@ -717,6 +846,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        StopLive();
         _browseCts?.Cancel();
         _svc?.Dispose();
     }

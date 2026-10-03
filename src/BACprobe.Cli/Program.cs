@@ -14,12 +14,13 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
           bacprobe job show  <site.bacprobe> [--device <n>] [--log]
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
+          bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
           bacprobe release   --device <instance> --object <type:n> [--priority 8] [--yes]
 
@@ -30,6 +31,7 @@ internal static partial class Program
                    (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
         export     Save a point list: csv, xlsx (Excel, with a Devices sheet) or ede. Default file: bacprobe-points-<time>.csv
                    in the current folder; an existing file is never overwritten without --force.
+        watch      Print a line whenever a point value or override changes (default every 2 s). Ctrl+C to stop.
         write      Overrides a point (asks you to confirm in plain English; default priority 8 = Manual Operator).
                    release gives it back. Every write is logged to %LOCALAPPDATA%BACprobewrite-log.txt.
         --bbmd     Register as a foreign device with a BBMD so Who-Is reaches other subnets (objects/read/write accept it too).
@@ -40,6 +42,7 @@ internal static partial class Program
         simulate   Run fake BACnet devices on this PC (Ctrl+C to stop) so you can test without hardware.
                    --devices n (default 2), --first instance (default 1001),
                    --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
+                   --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
         """;
 
@@ -50,6 +53,9 @@ internal static partial class Program
             Console.WriteLine(Usage);
             return args.Length == 0 ? 1 : 0;
         }
+
+        try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); } // so degree signs survive pipes and redirects
+        catch (IOException) { /* no console attached */ }
 
         var opts = ParseOptions(args.Skip(1).ToArray());
         try
@@ -62,6 +68,7 @@ internal static partial class Program
                 "simulate" => await SimulateAsync(opts),
                 "objects" => await ObjectsAsync(opts),
                 "read" => await ReadAsync(opts),
+                "watch" => await WatchAsync(opts),
                 "export" => await ExportAsync(opts),
                 "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),
@@ -186,7 +193,7 @@ internal static partial class Program
             for (var i = 0; i < count; i++)
             {
                 var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
-                var sim = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)(first + i)), supportRpm: !legacy)
+                var sim = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)(first + i)), supportRpm: !legacy, drift: !opts.ContainsKey("still"))
                 {
                     Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),
                 };

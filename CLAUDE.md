@@ -64,6 +64,8 @@ Core layout (`src/BACprobe.Core`): `Networking` (adapters, pre-flight rules, por
 `Bbmd` (foreign-device registration), `Export` (CSV/xlsx/EDE), `Jobs` (SQLite `.bacprobe`), `Simulation`.
 CLI commands: adapters, preflight, discover, objects, read, write, release, export, job (save|show), simulate.
 
+Phase 2 started: live values (`DeviceBrowser.RefreshValuesAsync`, polling; app toggle + `bacprobe watch`). The simulator now drifts analog inputs and Fan Status follows Fan Command (`--still` turns that off). COV is the obvious next step.
+
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.

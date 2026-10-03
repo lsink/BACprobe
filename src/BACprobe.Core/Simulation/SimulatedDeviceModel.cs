@@ -109,6 +109,34 @@ public sealed class SimulatedDeviceModel
         Set(o, BacnetPropertyIds.PROP_RELINQUISH_DEFAULT, relinquishDefault);
     }
 
+    private readonly List<(BacnetObjectId Input, BacnetObjectId Output)> _followers = [];
+
+    /// <summary>Make an input mirror an output, like a fan proof switch following the fan command.</summary>
+    public void AddFollower(BacnetObjectId input, BacnetObjectId output) => _followers.Add((input, output));
+
+    /// <summary>
+    /// Move the simulated world one step so live views have something to show: analog inputs wander a little,
+    /// and followers copy their output's present value.
+    /// </summary>
+    public void Tick(Random rng)
+    {
+        lock (_lock)
+        {
+            foreach (var o in _objects.Values)
+            {
+                if (o.Id.type != BacnetObjectTypes.OBJECT_ANALOG_INPUT) continue;
+                if (o.Props.TryGetValue(BacnetPropertyIds.PROP_PRESENT_VALUE, out var pv) && pv is [{ Value: float f }])
+                    pv[0] = Real((float)Math.Round(Math.Clamp(f + (rng.NextDouble() - 0.5) * 0.6, 40, 100), 1));
+            }
+            foreach (var (input, output) in _followers)
+            {
+                if (!_objects.TryGetValue(input, out var i) || !_objects.TryGetValue(output, out var outObj)) continue;
+                var value = Raw(outObj, BacnetPropertyIds.PROP_PRESENT_VALUE);
+                if (value is { Count: 1 }) i.Props[BacnetPropertyIds.PROP_PRESENT_VALUE] = [value[0]];
+            }
+        }
+    }
+
     /// <summary>A small but realistic VAV-style point set. Values vary a little with the instance so devices are distinguishable.</summary>
     public static SimulatedDeviceModel CreateSample(uint instance, string? name = null)
     {
@@ -122,6 +150,7 @@ public sealed class SimulatedDeviceModel
         m.AddBinaryInput(1, "Fan Status", "Supply fan proof", true);
         m.AddBinaryValue(1, "Occupied", "Occupancy mode", true);
         m.AddBinaryOutput(1, "Fan Command", "Supply fan start/stop", false);
+        m.AddFollower(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_INPUT, 1), new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_OUTPUT, 1));
         return m;
     }
 

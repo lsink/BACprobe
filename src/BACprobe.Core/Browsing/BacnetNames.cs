@@ -103,6 +103,14 @@ public static class BacnetNames
         return Enum.TryParse(key, out property) && Enum.IsDefined(property);
     }
 
+    /// <summary>Object types whose Present Value is worth refreshing live (not devices, files, calendars and the like).</summary>
+    public static bool HasLivePresentValue(BacnetObjectTypes type) => type is
+        BacnetObjectTypes.OBJECT_ANALOG_INPUT or BacnetObjectTypes.OBJECT_ANALOG_OUTPUT or BacnetObjectTypes.OBJECT_ANALOG_VALUE or
+        BacnetObjectTypes.OBJECT_BINARY_INPUT or BacnetObjectTypes.OBJECT_BINARY_OUTPUT or BacnetObjectTypes.OBJECT_BINARY_VALUE or
+        BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT or BacnetObjectTypes.OBJECT_MULTI_STATE_OUTPUT or BacnetObjectTypes.OBJECT_MULTI_STATE_VALUE or
+        BacnetObjectTypes.OBJECT_INTEGER_VALUE or BacnetObjectTypes.OBJECT_POSITIVE_INTEGER_VALUE or
+        BacnetObjectTypes.OBJECT_LARGE_ANALOG_VALUE or BacnetObjectTypes.OBJECT_ACCUMULATOR;
+
     public static bool IsVendorProperty(uint propertyId) => propertyId >= ProprietaryPropertyMin;
 
     public static string UnitsName(uint units)

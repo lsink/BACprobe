@@ -30,6 +30,29 @@ public sealed class ObjectSummary
     /// <summary>All occupied slots, for a tooltip.</summary>
     public string OverrideTooltip =>
         PrioritySlots.Count == 0 ? "" : "Priority array: " + string.Join("; ", PrioritySlots.Select(s => s.Description));
+    /// <summary>
+    /// Store freshly read live fields. Returns true only if something the user can see changed,
+    /// so a refresh that finds the same values does not make the screen flicker.
+    /// </summary>
+    public bool ApplyLive(string? presentValue, IReadOnlyList<PrioritySlot>? slots)
+    {
+        var changed = false;
+        if (presentValue is not null && presentValue != PresentValue)
+        {
+            PresentValue = presentValue;
+            changed = true;
+        }
+        if (slots is not null && !SameSlots(slots, PrioritySlots))
+        {
+            PrioritySlots = slots;
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static bool SameSlots(IReadOnlyList<PrioritySlot> a, IReadOnlyList<PrioritySlot> b) =>
+        a.Count == b.Count && a.Zip(b).All(p => p.First.Priority == p.Second.Priority && p.First.ValueText == p.Second.ValueText);
+
     public string TypeName => BacnetNames.ObjectTypeName(Id.type);
     public string Label => BacnetNames.ObjectLabel(Id);
     /// <summary>Present value with units, e.g. "72.4 °F".</summary>
@@ -128,6 +151,86 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         }
         return summaries;
     }
+
+    // Set once a device has shown it will not do ReadPropertyMultiple, so later refreshes skip the doomed first attempt.
+    private bool _preferSingleReads;
+
+    private static bool IsTimeout(Exception ex) =>
+        ex is TimeoutException || ex.Message.Contains("Timeout", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Re-read present values (and priority arrays for commandable points) of the given objects, updating them in place.
+    /// Returns the objects whose displayed value or override changed. Throws only if nothing at all could be read,
+    /// so the caller can count consecutive failures.
+    /// </summary>
+    public async Task<IReadOnlyList<ObjectSummary>> RefreshValuesAsync(IReadOnlyList<ObjectSummary> targets, CancellationToken ct = default)
+    {
+        var live = targets.Where(t => BacnetNames.HasLivePresentValue(t.Id.type)).ToList();
+        var byId = live.ToDictionary(t => t.Id);
+        var changed = new List<ObjectSummary>();
+        Exception? lastError = null;
+        var reads = 0;
+
+        foreach (var batch in live.Chunk(SummaryBatchSize))
+        {
+            ct.ThrowIfCancellationRequested();
+            var seen = new Dictionary<BacnetObjectId, (string? Value, IReadOnlyList<PrioritySlot>? Slots)>();
+
+            void Collect(BacnetObjectId id, BacnetPropertyIds prop, IList<BacnetValue>? values)
+            {
+                if (values is null || values.Count == 0 || values[0].Tag == BacnetApplicationTags.BACNET_APPLICATION_TAG_ERROR) return;
+                seen.TryGetValue(id, out var cur);
+                if (prop == BacnetPropertyIds.PROP_PRESENT_VALUE) cur.Value = BacnetNames.FormatValues(id.type, prop, values);
+                else if (prop == BacnetPropertyIds.PROP_PRIORITY_ARRAY) cur.Slots = PriorityArrayInfo.Occupied(id.type, values);
+                seen[id] = cur;
+            }
+
+            var ok = false;
+            if (!_preferSingleReads)
+            {
+                try
+                {
+                    var specs = batch.Select(t => new BacnetReadAccessSpecification(t.Id, LiveProps(t.Id.type)
+                        .Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList())).ToList();
+                    foreach (var r in await client.ReadPropertyMultipleAsync(device.Address, specs, cancellationToken: ct))
+                        foreach (var pv in r.values)
+                            Collect(r.objectIdentifier, (BacnetPropertyIds)pv.property.propertyIdentifier, pv.value);
+                    ok = true;
+                    reads++;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    lastError = ex;
+                    if (!IsTimeout(ex)) _preferSingleReads = true; // refused, not just slow: stop asking
+                }
+            }
+
+            if (!ok)
+            {
+                foreach (var t in batch)
+                    foreach (var p in LiveProps(t.Id.type))
+                    {
+                        try
+                        {
+                            Collect(t.Id, p, await client.ReadPropertyAsync(device.Address, t.Id, p, cancellationToken: ct));
+                            reads++;
+                        }
+                        catch (Exception ex) when (!ct.IsCancellationRequested) { lastError = ex; }
+                    }
+            }
+
+            foreach (var (id, got) in seen)
+                if (byId[id].ApplyLive(got.Value, got.Slots)) changed.Add(byId[id]);
+        }
+
+        if (reads == 0 && lastError is not null) throw lastError;
+        return changed;
+    }
+
+    private static BacnetPropertyIds[] LiveProps(BacnetObjectTypes type) =>
+        PriorityArrayInfo.MayHavePriorityArray(type)
+            ? [BacnetPropertyIds.PROP_PRESENT_VALUE, BacnetPropertyIds.PROP_PRIORITY_ARRAY]
+            : [BacnetPropertyIds.PROP_PRESENT_VALUE];
 
     private static void ApplySummary(ObjectSummary s, BacnetPropertyIds prop, IList<BacnetValue>? values)
     {
