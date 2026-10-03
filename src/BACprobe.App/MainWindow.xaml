@@ -254,7 +254,12 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" MinHeight="80" />
             </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Text="{Binding PropertiesHeader}" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+              <Button DockPanel.Dock="Right" Content="Trend live..." Padding="12,3" Command="{Binding TrendLiveCommand}"
+                      AutomationProperties.Name="Trend live"
+                      ToolTip="Open a temporary trend of this point: BACprobe reads it every few seconds and charts it while the window is open. Nothing is saved on the controller." />
+              <TextBlock Text="{Binding PropertiesHeader}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
             <DataGrid Grid.Row="2" ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
                       HeadersVisibility="Column" GridLinesVisibility="Horizontal">
               <DataGrid.Columns>

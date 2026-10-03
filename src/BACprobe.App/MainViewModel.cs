@@ -131,6 +131,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: opens the Trend window for a trend log.</summary>
     public Action<TrendViewModel> ShowTrend { get; set; } = _ => { };
 
+    /// <summary>Set by the window: opens a live (temporary) trend of one point.</summary>
+    public Action<LiveTrendViewModel> ShowLiveTrend { get; set; } = _ => { };
+
     /// <summary>Set by the window: Save dialog for trend data (Excel or CSV); null if cancelled.</summary>
     public Func<string, (string Path, ExportFormat Format)?> PickTrendFile { get; set; } = _ => null;
 
@@ -234,6 +237,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ViewTrendCommand))]
     private bool _isTrendSelected;
+
+    // Any point with a live value can be trended on the spot while connected: BACprobe samples it while the window is open.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(TrendLiveCommand))]
+    private bool _canTrendLive;
+
+    [RelayCommand(CanExecute = nameof(CanTrendLive))]
+    private void TrendLive()
+    {
+        if (_svc is null || SelectedObject is null || SelectedDevice is null) return;
+        var device = SelectedDevice;
+        var name = device.Name == "-" ? $"Device {device.Instance}" : device.Name;
+        ShowLiveTrend(new LiveTrendViewModel(_svc.OpenDevice(device.Device), SelectedObject.Summary, name, device.Instance, PickTrendFile));
+    }
 
     [RelayCommand(CanExecute = nameof(IsTrendSelected))]
     private void ViewTrend()
@@ -636,6 +653,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 StateChoices.Add(new StateChoice(label, text));
         IsStateSelected = StateChoices.Count > 0;
         IsTrendSelected = value?.Summary.Id.type == BacnetObjectTypes.OBJECT_TRENDLOG && _svc is not null;
+        CanTrendLive = value is not null && _svc is not null && BacnetNames.HasLivePresentValue(value.Summary.Id.type);
         if (value is not null && StateText.IsBinary(value.Summary.Id.type))
         {
             // Most overrides flip the point, so start on the opposite of what it is now. The confirmation still shows the new value.

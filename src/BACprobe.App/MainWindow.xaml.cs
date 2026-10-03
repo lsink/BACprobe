@@ -47,12 +47,13 @@ public partial class MainWindow : Window
                 [new PromptButton("Go back", IsCancel: true), new PromptButton("Continue anyway")]) == 1;
             vm.ShowFind = find => new FindWindow(find) { Owner = this }.Show();
             vm.ShowTrend = trend => new TrendWindow(trend) { Owner = this }.Show();
+            vm.ShowLiveTrend = trend => new LiveTrendWindow(trend) { Owner = this }.Show();
             vm.PickTrendFile = suggested =>
-                TrendWindow.PickFile((Window?)OwnedWindows.OfType<TrendWindow>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
-            // A trend window reads through the connection that opened it: close them when that connection is replaced.
+                TrendWindow.PickFile(OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
+            // Trend windows (log and live) read through the connection that opened them: close them when it is replaced.
             vm.ConnectionReset += () =>
             {
-                foreach (var w in OwnedWindows.OfType<TrendWindow>().ToList()) w.Close();
+                foreach (var w in OwnedWindows.OfType<Window>().Where(w => w is TrendWindow or LiveTrendWindow).ToList()) w.Close();
             };
             vm.PickExportFile = suggested =>
             {

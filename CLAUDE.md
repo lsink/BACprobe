@@ -80,6 +80,8 @@ Write explainer: `DeviceWriter.ExecuteAsync` returns `WriteOutcome.Explanation` 
 
 State text: `Browsing/StateText` (pure) labels multi-state values with State_Text ("Standby (3)") and binary values with Inactive/Active_Text ("Open (Active)"). `ObjectSummary.StateNames` holds the names (binary as [inactive, active]); `PresentValue` stays raw so live updates and COV compare as before, and `DisplayValue`/`ValueText`/`PriorityArrayText` add the names. Read with the summaries; saved in job files (schema 3, `objects.state_texts`). App: one state dropdown for binary and named multi-state points; CLI `write --value Standby`. Simulator sample devices have MSV/MSO/MSI points.
 
+Live trend (temporary): `Trends/LiveTrend` keeps one point's samples in memory (PC clock, capped at a day of 1 s samples, "no answer" gaps recorded); `LiveTrendSampler` reads through its own copy of the point via `RefreshValuesAsync`, so it never touches the main window's summaries. App: "Trend live..." next to the properties heading opens `LiveTrendWindow` (one point per window, interval 1-60 s, pause, clear, export with `pcClock: true`). Polling only, no COV. Closing the window stops the requests and discards the samples.
+
 Learned the hard way:
 - `BacnetClient.MaxSegments` defaults to MAX_SEG0 ("send me nothing bigger than one packet"): big object lists and PROP_ALL
   then abort. `DiscoveryService` sets MAX_SEG65. Never ask the device object for PROP_ALL either (it drags in Object_List); `DeviceBrowser` names its properties.

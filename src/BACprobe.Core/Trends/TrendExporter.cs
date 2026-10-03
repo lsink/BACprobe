@@ -6,19 +6,21 @@ namespace BACprobe.Core.Trends;
 
 public static class TrendExporter
 {
-    private static readonly string[] Header = ["Time (device clock)", "Value", "Units", "Meaning", "Status flags"];
+    private static string[] Header(bool pcClock) =>
+        [pcClock ? "Time (this PC)" : "Time (device clock)", "Value", "Units", "Meaning", "Status flags"];
 
     /// <summary>Save the records as CSV or Excel. Goes to a temp file first, so a failure never leaves a half-written export.</summary>
+    /// <param name="pcClock">True for a live trend sampled by BACprobe: its times are this PC's clock, not the device's.</param>
     public static void Write(string path, ExportFormat format, string deviceName, uint deviceInstance, string logName,
-        TrendLogInfo? info, IReadOnlyList<TrendRecord> records)
+        TrendLogInfo? info, IReadOnlyList<TrendRecord> records, bool pcClock = false)
     {
         var temp = path + ".tmp";
         try
         {
             switch (format)
             {
-                case ExportFormat.Csv: CsvWriter.WriteFile(temp, CsvLines(records, info?.Units)); break;
-                case ExportFormat.Xlsx: WriteXlsx(temp, deviceName, deviceInstance, logName, info, records); break;
+                case ExportFormat.Csv: CsvWriter.WriteFile(temp, CsvLines(records, info?.Units, pcClock)); break;
+                case ExportFormat.Xlsx: WriteXlsx(temp, deviceName, deviceInstance, logName, info, records, pcClock); break;
                 default: throw new ArgumentException("Trend data can be exported as CSV or Excel.", nameof(format));
             }
             File.Move(temp, path, overwrite: true);
@@ -29,9 +31,9 @@ public static class TrendExporter
         }
     }
 
-    public static IEnumerable<string> CsvLines(IReadOnlyList<TrendRecord> records, string? units)
+    public static IEnumerable<string> CsvLines(IReadOnlyList<TrendRecord> records, string? units, bool pcClock = false)
     {
-        yield return CsvWriter.Line(Header);
+        yield return CsvWriter.Line(Header(pcClock));
         foreach (var r in records)
             yield return CsvWriter.Line(
             [
@@ -44,12 +46,13 @@ public static class TrendExporter
     }
 
     private static void WriteXlsx(string path, string deviceName, uint deviceInstance, string logName, TrendLogInfo? info,
-        IReadOnlyList<TrendRecord> records)
+        IReadOnlyList<TrendRecord> records, bool pcClock)
     {
         using var wb = new XLWorkbook();
+        var header = Header(pcClock);
 
         var sheet = wb.AddWorksheet("Trend");
-        for (var c = 0; c < Header.Length; c++) sheet.Cell(1, c + 1).Value = Header[c];
+        for (var c = 0; c < header.Length; c++) sheet.Cell(1, c + 1).Value = header[c];
         var row = 2;
         foreach (var r in records)
         {
@@ -62,10 +65,10 @@ public static class TrendExporter
             sheet.Cell(row, 5).SetValue(CsvWriter.StripControl(r.Flags));
             row++;
         }
-        sheet.Range(1, 1, 1, Header.Length).Style.Font.Bold = true;
+        sheet.Range(1, 1, 1, header.Length).Style.Font.Bold = true;
         sheet.SheetView.FreezeRows(1);
-        if (row > 2) sheet.Range(1, 1, row - 1, Header.Length).SetAutoFilter();
-        sheet.Columns(1, Header.Length).AdjustToContents(1, Math.Min(row, 500), 8, 40);
+        if (row > 2) sheet.Range(1, 1, row - 1, header.Length).SetAutoFilter();
+        sheet.Columns(1, header.Length).AdjustToContents(1, Math.Min(row, 500), 8, 40);
 
         var about = wb.AddWorksheet("Log");
         void Line(int r, string label, string? value)
@@ -87,7 +90,8 @@ public static class TrendExporter
             Line(8, "Maximum", s.Max.ToString("0.##", CultureInfo.InvariantCulture));
             Line(9, "Average", s.Average.ToString("0.##", CultureInfo.InvariantCulture));
         }
-        Line(11, "Times are the device's own clock", "BACnet logs carry no time zone");
+        if (pcClock) Line(11, "Times are this PC's clock", "sampled live by BACprobe while its window was open");
+        else Line(11, "Times are the device's own clock", "BACnet logs carry no time zone");
         about.Columns(1, 2).AdjustToContents();
 
         using var stream = File.Create(path);
