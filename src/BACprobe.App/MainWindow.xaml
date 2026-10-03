@@ -246,22 +246,23 @@
           </DataGrid>
           <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" />
 
-          <!-- Properties on top (takes whatever space is left, never collapses), override panel underneath -->
+          <!-- Actions (trend / override) on top so they are never cut off on a short screen; the properties list takes
+               whatever space is left and scrolls by itself. -->
           <Grid Grid.Column="2">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto" />
-              <RowDefinition Height="*" MinHeight="120" />
               <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" MinHeight="80" />
             </Grid.RowDefinitions>
             <TextBlock Grid.Row="0" Text="{Binding PropertiesHeader}" FontWeight="SemiBold" Margin="0,0,0,4" />
-            <DataGrid Grid.Row="1" ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
+            <DataGrid Grid.Row="2" ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
                       HeadersVisibility="Column" GridLinesVisibility="Horizontal">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="Property" Binding="{Binding Name}" Width="150" />
                 <DataGridTextColumn Header="Value" Binding="{Binding Display}" Width="*" />
               </DataGrid.Columns>
             </DataGrid>
-            <StackPanel Grid.Row="2" Margin="0,8,0,0"
+            <StackPanel Grid.Row="1" Margin="0,0,0,10"
                         Visibility="{Binding IsTrendSelected, Converter={StaticResource BoolToVis}}">
               <TextBlock Text="Trend log" FontWeight="SemiBold" />
               <TextBlock Text="The controller records this point's history on its own. Open it to see a chart, the recorded values, and to save them to Excel."
@@ -269,7 +270,7 @@
               <Button Content="View trend..." Padding="16,4" Margin="0,8,0,0" HorizontalAlignment="Left"
                       Command="{Binding ViewTrendCommand}" AutomationProperties.Name="View trend" />
             </StackPanel>
-            <StackPanel Grid.Row="2" Margin="0,8,0,0"
+            <StackPanel Grid.Row="1" Margin="0,0,0,10"
                         Visibility="{Binding CanWriteSelected, Converter={StaticResource BoolToVis}}">
               <TextBlock Text="Override this point" FontWeight="SemiBold" />
               <DockPanel Margin="0,6,0,0">
