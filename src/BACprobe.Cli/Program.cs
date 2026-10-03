@@ -13,8 +13,8 @@ internal static partial class Program
         Usage:
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
-          bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--dup] [--unassigned] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -42,10 +42,13 @@ internal static partial class Program
         job        Keep a site visit in one file. 'job save' reads the devices and points and stores them (plus any
                    --name/--notes); 'job show <file> [--device n] [--log]' browses it offline; 'export --job <file>'
                    exports from it. Saved values are a snapshot, not live. Existing files need --force.
+        discover   also runs a network check: duplicate device numbers, duplicate addresses, never-commissioned devices, and with
+                   --job <file> what is missing, new, moved or changed compared with a saved job.
         simulate   Run fake BACnet devices on this PC (Ctrl+C to stop) so you can test without hardware.
                    --devices n (default 2), --first instance (default 1001),
                    --no-rpm makes the last device refuse ReadPropertyMultiple, like older devices.
                    --no-cov makes the last device refuse COV; --cov-limit n makes every device accept only n subscriptions.
+                   --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
         """;
@@ -168,6 +171,7 @@ internal static partial class Program
                               $"{d.ModelName ?? "-",-18} {d.FirmwareRevision ?? "-",-12} {d.ObjectName ?? "-"}");
             if (d.EnrichError is not null) Console.WriteLine($"          ! {d.EnrichError}");
         }
+        PrintNetworkCheck(svc.CheckNetwork(), opts, devices);
         return 0;
     }
 
@@ -206,6 +210,24 @@ internal static partial class Program
                 sim.Start();
                 sims.Add(sim);
                 Console.WriteLine($"Simulating device {first + i}{(legacy ? " (refuses ReadPropertyMultiple)" : "")} on {adapter.Address}");
+            }
+
+            // Problems to find: an impostor reusing the first device's number, and a never-commissioned device.
+            if (opts.ContainsKey("dup"))
+            {
+                var impostor = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)first, $"SIM-IMPOSTOR-{first}"),
+                    drift: !opts.ContainsKey("still")) { Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}") };
+                impostor.Start();
+                sims.Add(impostor);
+                Console.WriteLine($"Simulating an impostor that also claims device number {first}");
+            }
+            if (opts.ContainsKey("unassigned"))
+            {
+                var fresh = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample(4194303, "SIM-UNCOMMISSIONED"),
+                    drift: !opts.ContainsKey("still")) { Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}") };
+                fresh.Start();
+                sims.Add(fresh);
+                Console.WriteLine("Simulating a device that was never given a device number (4194303)");
             }
         }
         catch (Exception ex)

@@ -69,6 +69,8 @@ Phase 2 started: live values. `Live/LiveWatcher` keeps a device current with COV
 
 Trend logs: `Trends/` (`TrendLogReader` reads settings + pages through records by position with ReadRange; `TrendRecordDecoder`; `TrendStats`; `TrendExporter`). App: "View trend..." opens `TrendWindow` (custom `TrendChart` control, no chart library). The simulator has two trend logs (a record every 10 s, 300/120 records of history) and answers ReadRange in small pages to force paging.
 
+Network check: `DiscoveryService` keeps EVERY I-Am (`Heard`), not just the first per device number, because a duplicate would otherwise be invisible; `NetworkCheck.Analyze` finds conflicts and `NetworkCheck.Compare` diffs against a saved job (IP only: a changed port is not a move). Simulator: `--dup`, `--unassigned`.
+
 Learned the hard way:
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.

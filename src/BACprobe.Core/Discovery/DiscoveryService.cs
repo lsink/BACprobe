@@ -9,6 +9,7 @@ public sealed class DiscoveryService : IDisposable
     private readonly BacnetClient _client;
     private readonly BacnetIpUdpProtocolTransport _transport;
     private readonly ConcurrentDictionary<uint, DiscoveredDevice> _devices = new();
+    private readonly ConcurrentQueue<IAmObservation> _heard = new();
 
     public DiscoveryService(AdapterInfo adapter, int port = PreflightRules.BacnetPort, int timeoutMs = 3000, int retries = 1)
     {
@@ -49,11 +50,19 @@ public sealed class DiscoveryService : IDisposable
     private void OnIam(BacnetClient sender, BacnetAddress adr, uint deviceId, uint maxApdu,
         BacnetSegmentations segmentation, ushort vendorId)
     {
+        // Keep every reply, not just the first per device number: a second device using the same number would otherwise be invisible.
+        _heard.Enqueue(new IAmObservation(deviceId, adr.ToString(), adr.net, Convert.ToHexString(adr.adr ?? []), vendorId));
         _devices.TryAdd(deviceId, new DiscoveredDevice
         {
             InstanceId = deviceId, Address = adr, MaxApdu = maxApdu, Segmentation = segmentation, VendorId = vendorId,
         });
     }
+
+    /// <summary>Every I-Am heard so far, including repeats and conflicting duplicates.</summary>
+    public IReadOnlyList<IAmObservation> Heard => [.. _heard];
+
+    /// <summary>Conflicts in what has answered so far: duplicate device numbers, duplicate addresses, unassigned devices.</summary>
+    public IReadOnlyList<NetworkFinding> CheckNetwork() => NetworkCheck.Analyze(Heard);
 
     /// <summary>Broadcast Who-Is and collect I-Am replies for <paramref name="wait"/>. -1 = no limit.</summary>
     public async Task<IReadOnlyList<DiscoveredDevice>> WhoIsAsync(int low, int high, TimeSpan wait, CancellationToken ct = default)

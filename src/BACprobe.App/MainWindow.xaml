@@ -110,6 +110,34 @@
                 ToolTip="Read every device found and save one combined point list." />
       </WrapPanel>
       <TextBlock DockPanel.Dock="Top" Text="{Binding BbmdStatus}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
+      <!-- Network check: conflicts and differences from a saved job. One line unless something needs fixing. -->
+      <Expander DockPanel.Dock="Top" Header="{Binding NetworkCheckSummary}" IsExpanded="{Binding NetworkCheckExpanded, Mode=TwoWay}"
+                Margin="0,0,0,8" Visibility="{Binding HasNetworkCheck, Converter={StaticResource BoolToVis}}">
+        <ItemsControl ItemsSource="{Binding NetworkFindings}" Margin="4,6,0,4">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="{x:Type app:FindingRow}">
+              <StackPanel Margin="0,4,0,6">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding Icon}" Width="22" FontWeight="Bold">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="SteelBlue" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
+                          <DataTrigger Binding="{Binding Severity}" Value="Problem"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock Text="{Binding Detail}" Margin="22,2,0,0" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding Help}" Margin="22,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Expander>
       <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="8,6" BorderBrush="DarkOrange" BorderThickness="1" CornerRadius="4">
         <Border.Style>
           <Style TargetType="Border">
