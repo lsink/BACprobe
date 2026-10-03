@@ -110,9 +110,10 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
                 cancellationToken: ct);
             return ToIds(all);
         }
-        catch (Exception) when (!ct.IsCancellationRequested)
+        catch (Exception ex) when (!ct.IsCancellationRequested && !BacnetFailure.IsTimeout(ex))
         {
-            // Likely a segmentation problem on a big list; fall through to per-item reads.
+            // Too big to send in one piece (the device cannot segment); fall through to per-item reads.
+            // A timeout is rethrown instead: a device that is not answering would only time out on every item too.
         }
 
         var countValues = await client.ReadPropertyAsync(device.Address, DeviceObject, BacnetPropertyIds.PROP_OBJECT_LIST,
@@ -131,46 +132,91 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
     private static List<BacnetObjectId> ToIds(IEnumerable<BacnetValue> values) =>
         values.Where(v => v.Value is BacnetObjectId).Select(v => (BacnetObjectId)v.Value).ToList();
 
-    /// <summary>Name, description, value and units for each object, a few objects per request.</summary>
+    /// <summary>
+    /// Objects per ReadPropertyMultiple. A device that can send segmented answers gets the full batch; one that cannot
+    /// gets as many as fit in its max APDU (roughly 160 bytes per object with names, value, units and priority array),
+    /// so a small MS/TP controller is not sent requests it can only abort.
+    /// </summary>
+    public static int BatchSizeFor(uint maxApdu, BacnetSegmentations segmentation) =>
+        segmentation is BacnetSegmentations.SEGMENTATION_BOTH or BacnetSegmentations.SEGMENTATION_TRANSMIT
+            ? SummaryBatchSize
+            : Math.Clamp((int)(maxApdu / 160), 1, SummaryBatchSize);
+
+    /// <summary>
+    /// Name, description, value and units for each object, a few objects per request. A batch the device aborts is split
+    /// in half; a device that refuses ReadPropertyMultiple is read one property at a time from then on. Throws a
+    /// <see cref="TimeoutException"/> if the device stops answering, instead of waiting out every remaining property.
+    /// </summary>
     public async Task<IReadOnlyList<ObjectSummary>> ReadSummariesAsync(IReadOnlyList<BacnetObjectId> ids,
         IProgress<int>? progress = null, CancellationToken ct = default)
     {
         var summaries = ids.Select(id => new ObjectSummary { Id = id }).ToList();
         var byId = summaries.ToDictionary(s => s.Id);
-        var done = 0;
+        var batchSize = BatchSizeFor(device.MaxApdu, device.Segmentation);
+        var timeouts = 0;
 
-        foreach (var batch in ids.Chunk(SummaryBatchSize))
+        var next = 0;
+        while (next < ids.Count)
         {
             ct.ThrowIfCancellationRequested();
-            try
+            var batch = ids.Skip(next).Take(batchSize).ToArray();
+            var viaRpm = false;
+            if (!_preferSingleReads)
             {
-                var specs = batch.Select(id => new BacnetReadAccessSpecification(id,
-                    SummaryPropsFor(id.type).Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList())).ToList();
-                var results = await client.ReadPropertyMultipleAsync(device.Address, specs, cancellationToken: ct);
-                foreach (var r in results)
-                    foreach (var pv in r.values)
-                        ApplySummary(byId[r.objectIdentifier], (BacnetPropertyIds)pv.property.propertyIdentifier, pv.value);
+                try
+                {
+                    var specs = batch.Select(id => new BacnetReadAccessSpecification(id,
+                        SummaryPropsFor(id.type).Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList())).ToList();
+                    var results = await client.ReadPropertyMultipleAsync(device.Address, specs, cancellationToken: ct);
+                    foreach (var r in results)
+                        if (byId.TryGetValue(r.objectIdentifier, out var s))
+                            foreach (var pv in r.values)
+                                ApplySummary(s, (BacnetPropertyIds)pv.property.propertyIdentifier, pv.value);
+                    viaRpm = true;
+                    timeouts = 0;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    if (BacnetFailure.IsAbort(ex) && batch.Length > 1)
+                    {
+                        batchSize = Math.Max(1, batch.Length / 2); // too big for this device: ask for less, same objects again
+                        continue;
+                    }
+                    if (BacnetFailure.IsTimeout(ex)) CountTimeout(ref timeouts, ex);
+                    else if (!BacnetFailure.IsAbort(ex)) _preferSingleReads = true; // refused, not just slow or too big: stop asking
+                }
             }
-            catch (Exception) when (!ct.IsCancellationRequested)
-            {
-                foreach (var id in batch) // device refused RPM: one property at a time
+
+            if (!viaRpm)
+                foreach (var id in batch) // one property at a time
                     foreach (var p in SummaryPropsFor(id.type))
                     {
-                        try { ApplySummary(byId[id], p, await client.ReadPropertyAsync(device.Address, id, p, cancellationToken: ct)); }
-                        catch (Exception) when (!ct.IsCancellationRequested) { /* property not present on this object type */ }
+                        try
+                        {
+                            ApplySummary(byId[id], p, await client.ReadPropertyAsync(device.Address, id, p, cancellationToken: ct));
+                            timeouts = 0;
+                        }
+                        catch (Exception ex) when (!ct.IsCancellationRequested)
+                        {
+                            if (BacnetFailure.IsTimeout(ex)) CountTimeout(ref timeouts, ex);
+                            else timeouts = 0; // property not present on this object type
+                        }
                     }
-            }
-            done += batch.Length;
-            progress?.Report(done);
+
+            next += batch.Length;
+            progress?.Report(next);
         }
         return summaries;
     }
 
+    private static void CountTimeout(ref int timeouts, Exception ex)
+    {
+        if (++timeouts >= BacnetFailure.MaxTimeoutsInARow)
+            throw new TimeoutException($"The device stopped answering ({ex.Message}).", ex);
+    }
+
     // Set once a device has shown it will not do ReadPropertyMultiple, so later refreshes skip the doomed first attempt.
     private bool _preferSingleReads;
-
-    private static bool IsTimeout(Exception ex) =>
-        ex is TimeoutException || ex.Message.Contains("Timeout", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Re-read present values (and priority arrays for commandable points) of the given objects, updating them in place.
@@ -185,7 +231,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         Exception? lastError = null;
         var reads = 0;
 
-        foreach (var batch in live.Chunk(SummaryBatchSize))
+        foreach (var batch in live.Chunk(BatchSizeFor(device.MaxApdu, device.Segmentation)))
         {
             ct.ThrowIfCancellationRequested();
             var seen = new Dictionary<BacnetObjectId, (string? Value, IReadOnlyList<PrioritySlot>? Slots)>();
@@ -215,26 +261,43 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     lastError = ex;
-                    if (!IsTimeout(ex)) _preferSingleReads = true; // refused, not just slow: stop asking
+                    if (BacnetFailure.IsTimeout(ex))
+                    {
+                        // No answer at all. Nothing read yet this pass: the device is down, say so now rather than
+                        // waiting out a timeout per property. Otherwise skip this batch; the next pass gets it.
+                        if (reads == 0) throw;
+                        continue;
+                    }
+                    _preferSingleReads = true; // refused, not just slow: stop asking
                 }
             }
 
+            var silent = false;
             if (!ok)
             {
-                foreach (var t in batch)
+                var timeouts = 0;
+                foreach (var t in batch.TakeWhile(_ => !silent))
                     foreach (var p in LiveProps(t.Id.type))
                     {
+                        if (silent) break;
                         try
                         {
                             Collect(t.Id, p, await client.ReadPropertyAsync(device.Address, t.Id, p, cancellationToken: ct));
                             reads++;
+                            timeouts = 0;
                         }
-                        catch (Exception ex) when (!ct.IsCancellationRequested) { lastError = ex; }
+                        catch (Exception ex) when (!ct.IsCancellationRequested)
+                        {
+                            lastError = ex;
+                            // The device went quiet: stop this pass (keeping what was read) instead of waiting out the rest.
+                            if (BacnetFailure.IsTimeout(ex) && ++timeouts >= BacnetFailure.MaxTimeoutsInARow) silent = true;
+                        }
                     }
             }
 
             foreach (var (id, got) in seen)
-                if (byId[id].ApplyLive(got.Value, got.Slots)) changed.Add(byId[id]);
+                if (byId.TryGetValue(id, out var target) && target.ApplyLive(got.Value, got.Slots)) changed.Add(target);
+            if (silent) break;
         }
 
         if (reads == 0 && lastError is not null) throw lastError;

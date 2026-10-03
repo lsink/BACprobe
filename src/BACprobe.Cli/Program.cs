@@ -15,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -61,6 +61,7 @@ internal static partial class Program
                    (av:1) refuse writes. (The damper always limits itself to 0-100.)
                    --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
                    --objects n adds n spare points to each device, so its object list needs segmented replies (a big controller).
+                   --outage 20,25 makes the first device go silent after 20 s for 25 s and forget its COV subscriptions (a restart).
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
         """;
@@ -204,6 +205,7 @@ internal static partial class Program
         var sims = new List<SimulatedDevice>();
         var routers = new List<SimulatedRouter>();
         SimulatedBbmd? bbmdSim = null;
+        Timer? outageTimer = null;
         try
         {
             if (opts.ContainsKey("bbmd") || opts.ContainsKey("bbmd-refuse"))
@@ -250,6 +252,17 @@ internal static partial class Program
                 }
             }
 
+            if (opts.TryGetValue("outage", out var outageSpec))
+            {
+                // "20,25": after 20 s the first device goes silent for 25 s and forgets its COV subscriptions, like a restart.
+                var parts = (outageSpec ?? "20,25").Split(',');
+                if (parts.Length != 2 || !int.TryParse(parts[0], out var after) || !int.TryParse(parts[1], out var length) || after < 0 || length < 1)
+                    throw new ArgumentException("--outage takes \"after,seconds\", e.g. --outage 20,25.");
+                var target = sims[0];
+                outageTimer = new Timer(_ => target.GoSilent(TimeSpan.FromSeconds(length)), null, TimeSpan.FromSeconds(after), Timeout.InfiniteTimeSpan);
+                Console.WriteLine($"Device {first} will go silent after {after} s for {length} s.");
+            }
+
             // Problems to find: an impostor reusing the first device's number, and a never-commissioned device.
             if (opts.ContainsKey("dup"))
             {
@@ -283,6 +296,7 @@ internal static partial class Program
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
         try { await Task.Delay(Timeout.Infinite, cts.Token); }
         catch (OperationCanceledException) { }
+        outageTimer?.Dispose();
         foreach (var s in sims) s.Dispose();
         foreach (var r in routers) r.Dispose();
         bbmdSim?.Dispose();

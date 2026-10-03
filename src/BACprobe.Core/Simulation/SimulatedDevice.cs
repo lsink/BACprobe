@@ -36,6 +36,22 @@ public sealed class SimulatedDevice : IDisposable
         public double? LastNumber { get; set; }
     }
 
+    private DateTime _silentUntil = DateTime.MinValue;
+
+    /// <summary>True while the device is pretending to be off (see <see cref="GoSilent"/>).</summary>
+    private bool Silent => DateTime.UtcNow < _silentUntil;
+
+    /// <summary>
+    /// Stop answering anything for a while, then come back having forgotten every COV subscription: like a controller
+    /// that loses power and restarts, or a network drop. Its address stays the same, as a real controller's does.
+    /// </summary>
+    public void GoSilent(TimeSpan duration)
+    {
+        lock (_subsLock) _subs.Clear();
+        _silentUntil = DateTime.UtcNow + duration;
+        Log?.Invoke($"[{Model.Instance}] going silent for {duration.TotalSeconds:0} s (subscriptions forgotten, like a restart)");
+    }
+
     public SimulatedDeviceModel Model { get; }
     public Action<string>? Log { get; set; }
 
@@ -71,6 +87,7 @@ public sealed class SimulatedDevice : IDisposable
 
     private void OnWhoIs(BacnetClient sender, BacnetAddress adr, int low, int high)
     {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
         if ((low >= 0 && Model.Instance < low) || (high >= 0 && Model.Instance > high)) return;
         Log?.Invoke($"[{Model.Instance}] Who-Is from {adr} -> I-Am");
         sender.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_TRANSMIT);
@@ -79,6 +96,7 @@ public sealed class SimulatedDevice : IDisposable
     private void OnReadProperty(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetObjectId objectId,
         BacnetPropertyReference property, BacnetMaxSegments maxSegments)
     {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
         var prop = (BacnetPropertyIds)property.propertyIdentifier;
         if (Model.TryRead(objectId, prop, property.propertyArrayIndex, out var values, out var err))
         {
@@ -95,6 +113,7 @@ public sealed class SimulatedDevice : IDisposable
     private void OnReadPropertyMultiple(BacnetClient sender, BacnetAddress adr, byte invokeId,
         IList<BacnetReadAccessSpecification> specs, BacnetMaxSegments maxSegments)
     {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
         if (!_supportRpm)
         {
             Log?.Invoke($"[{Model.Instance}] ReadPropertyMultiple from {adr} -> refused (legacy mode)");
@@ -135,6 +154,7 @@ public sealed class SimulatedDevice : IDisposable
     private void OnWriteProperty(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetObjectId objectId,
         BacnetPropertyValue value, BacnetMaxSegments maxSegments)
     {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
         var prop = (BacnetPropertyIds)value.property.propertyIdentifier;
         var first = value.value?.FirstOrDefault() ?? new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_NULL, null);
         var err = Model.Write(objectId, prop, first, value.priority, out var summary);
@@ -159,6 +179,7 @@ public sealed class SimulatedDevice : IDisposable
         BacnetPropertyReference property, BacnetReadRangeRequestTypes requestType, uint position, DateTime time, int count,
         BacnetMaxSegments maxSegments)
     {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
         List<BacnetLogRecord> slice = [];
         uint firstSequence = 0;
         bool isFirst = false, isLast = false;
@@ -202,6 +223,7 @@ public sealed class SimulatedDevice : IDisposable
     private void OnSubscribeCov(BacnetClient sender, BacnetAddress adr, byte invokeId, uint process, BacnetObjectId objectId,
         bool cancel, bool confirmed, uint lifetime, BacnetMaxSegments maxSegments)
     {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
         if (!_supportCov)
         {
             Log?.Invoke($"[{Model.Instance}] SubscribeCOV {objectId} from {adr} -> refused (no COV support)");

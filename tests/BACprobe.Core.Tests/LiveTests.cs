@@ -129,4 +129,14 @@ public class LiveTests
         m.Tick(rng);
         Assert.Equal("off", Status());
     }
+
+    [Theory]
+    [InlineData(1476u, BacnetSegmentations.SEGMENTATION_NONE, 8)]
+    [InlineData(480u, BacnetSegmentations.SEGMENTATION_NONE, 3)]   // a typical MS/TP controller
+    [InlineData(206u, BacnetSegmentations.SEGMENTATION_RECEIVE, 1)] // can receive segments but not send them
+    [InlineData(50u, BacnetSegmentations.SEGMENTATION_NONE, 1)]     // never zero
+    [InlineData(480u, BacnetSegmentations.SEGMENTATION_BOTH, 8)]    // segments its answers: full batch
+    [InlineData(480u, BacnetSegmentations.SEGMENTATION_TRANSMIT, 8)]
+    public void Summary_batches_fit_what_the_device_can_send(uint maxApdu, BacnetSegmentations seg, int expected) =>
+        Assert.Equal(expected, DeviceBrowser.BatchSizeFor(maxApdu, seg));
 }
