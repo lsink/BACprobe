@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\BACprobe.Core\BACprobe.Core.csproj" />
+    <PackageReference Include="System.IO.Ports" />
   </ItemGroup>
 </Project>
