@@ -1,3 +1,4 @@
+using System.IO.BACnet;
 using System.Net;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Networking;
@@ -14,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -59,6 +60,7 @@ internal static partial class Program
                    --stuck holds Occupied (bv:1) at priority 5, so writes at 8 are accepted but ignored; --protected makes Zone Setpoint
                    (av:1) refuse writes. (The damper always limits itself to 0-100.)
                    --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
+                   --objects n adds n spare points to each device, so its object list needs segmented replies (a big controller).
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
         """;
@@ -196,6 +198,8 @@ internal static partial class Program
         var count = IntOpt(opts, "devices", 2);
         var first = IntOpt(opts, "first", 1001);
         if (count < 1 || count > 50) throw new ArgumentException("--devices must be between 1 and 50.");
+        var padding = IntOpt(opts, "objects", 0);
+        if (padding is < 0 or > 5000) throw new ArgumentException("--objects must be between 0 and 5000.");
 
         var sims = new List<SimulatedDevice>();
         var routers = new List<SimulatedRouter>();
@@ -218,7 +222,10 @@ internal static partial class Program
             for (var i = 0; i < count; i++)
             {
                 var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
-                var sim = new SimulatedDevice(adapter, SimulatedDeviceModel.CreateSample((uint)(first + i), null, stuck: opts.ContainsKey("stuck"), protectedSetpoint: opts.ContainsKey("protected")), supportRpm: !legacy, drift: !opts.ContainsKey("still"),
+                var model = SimulatedDeviceModel.CreateSample((uint)(first + i), null, stuck: opts.ContainsKey("stuck"), protectedSetpoint: opts.ContainsKey("protected"));
+                for (var k = 1; k <= padding; k++) // a big controller: its object list no longer fits in one packet
+                    model.AddAnalogValue((uint)(1000 + k), $"Spare Value {k}", "Padding point", 0, BacnetUnitsId.UNITS_NO_UNITS, commandable: false);
+                var sim = new SimulatedDevice(adapter, model, supportRpm: !legacy, drift: !opts.ContainsKey("still"),
                     supportCov: !(opts.ContainsKey("no-cov") && i == count - 1), covLimit: IntOpt(opts, "cov-limit", 0))
                 {
                     Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),

@@ -15,7 +15,9 @@ public sealed class DiscoveryService : IDisposable
     {
         _transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
             localEndpointIp: adapter.Address.ToString());
-        _client = new BacnetClient(_transport, timeoutMs, retries);
+        // The library defaults to MAX_SEG0, which tells every device "send me nothing bigger than one packet": big object
+        // lists and property reads then abort and fall back to slow one-at-a-time reads. Accept segmented replies.
+        _client = new BacnetClient(_transport, timeoutMs, retries) { MaxSegments = BacnetMaxSegments.MAX_SEG65 };
         _client.OnIam += OnIam;
         _client.OnIAmRouterToNetworkMessage += OnIAmRouter;
     }

@@ -64,7 +64,7 @@ public sealed class SimulatedDevice : IDisposable
     public void Start()
     {
         _client.Start();
-        _client.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_NONE); // announce, like a device powering up
+        _client.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_TRANSMIT); // announce, like a device powering up
         if (_drift) _driftTimer = new Timer(_ => Model.Tick(_rng), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         _covTimer = new Timer(_ => CheckCov(), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
     }
@@ -73,7 +73,7 @@ public sealed class SimulatedDevice : IDisposable
     {
         if ((low >= 0 && Model.Instance < low) || (high >= 0 && Model.Instance > high)) return;
         Log?.Invoke($"[{Model.Instance}] Who-Is from {adr} -> I-Am");
-        sender.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_NONE);
+        sender.Iam(Model.Instance, BacnetSegmentations.SEGMENTATION_TRANSMIT);
     }
 
     private void OnReadProperty(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetObjectId objectId,
@@ -83,7 +83,7 @@ public sealed class SimulatedDevice : IDisposable
         if (Model.TryRead(objectId, prop, property.propertyArrayIndex, out var values, out var err))
         {
             Log?.Invoke($"[{Model.Instance}] ReadProperty {objectId} {prop} from {adr}");
-            sender.ReadPropertyResponse(adr, invokeId, null, objectId, property, values);
+            sender.ReadPropertyResponse(adr, invokeId, sender.GetSegmentBuffer(maxSegments), objectId, property, values);
         }
         else
         {
@@ -129,7 +129,7 @@ public sealed class SimulatedDevice : IDisposable
             }
             results.Add(new BacnetReadAccessResult(spec.objectIdentifier, props));
         }
-        sender.ReadPropertyMultipleResponse(adr, invokeId, null, results);
+        sender.ReadPropertyMultipleResponse(adr, invokeId, sender.GetSegmentBuffer(maxSegments), results); // segments a big answer if the client allows it
     }
 
     private void OnWriteProperty(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetObjectId objectId,

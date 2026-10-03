@@ -262,20 +262,45 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         BacnetPropertyIds.PROP_STOP_WHEN_FULL, BacnetPropertyIds.PROP_START_TIME, BacnetPropertyIds.PROP_STOP_TIME,
     ];
 
+    // The device object's "all" includes Object_List, which on a big controller is thousands of entries. Name what a tech needs.
+    private static readonly BacnetPropertyIds[] DeviceObjectProps =
+    [
+        BacnetPropertyIds.PROP_OBJECT_IDENTIFIER, BacnetPropertyIds.PROP_OBJECT_NAME, BacnetPropertyIds.PROP_OBJECT_TYPE,
+        BacnetPropertyIds.PROP_DESCRIPTION, BacnetPropertyIds.PROP_LOCATION, BacnetPropertyIds.PROP_SYSTEM_STATUS,
+        BacnetPropertyIds.PROP_VENDOR_NAME, BacnetPropertyIds.PROP_VENDOR_IDENTIFIER, BacnetPropertyIds.PROP_MODEL_NAME,
+        BacnetPropertyIds.PROP_FIRMWARE_REVISION, BacnetPropertyIds.PROP_APPLICATION_SOFTWARE_VERSION,
+        BacnetPropertyIds.PROP_PROTOCOL_VERSION, BacnetPropertyIds.PROP_PROTOCOL_REVISION,
+        BacnetPropertyIds.PROP_MAX_APDU_LENGTH_ACCEPTED, BacnetPropertyIds.PROP_SEGMENTATION_SUPPORTED,
+        BacnetPropertyIds.PROP_APDU_TIMEOUT, BacnetPropertyIds.PROP_NUMBER_OF_APDU_RETRIES,
+        BacnetPropertyIds.PROP_MAX_MASTER, BacnetPropertyIds.PROP_MAX_INFO_FRAMES, BacnetPropertyIds.PROP_DATABASE_REVISION,
+        BacnetPropertyIds.PROP_LOCAL_DATE, BacnetPropertyIds.PROP_LOCAL_TIME, BacnetPropertyIds.PROP_UTC_OFFSET,
+        BacnetPropertyIds.PROP_DAYLIGHT_SAVINGS_STATUS, BacnetPropertyIds.PROP_LAST_RESTART_REASON,
+        BacnetPropertyIds.PROP_TIME_OF_DEVICE_RESTART,
+    ];
+
+    /// <summary>Named property lists for objects where "all" would drag in something huge; null means ask for all.</summary>
+    private static BacnetPropertyIds[]? NamedProps(BacnetObjectTypes type) =>
+        IsLogObject(type) ? LogObjectProps : type == BacnetObjectTypes.OBJECT_DEVICE ? DeviceObjectProps : null;
+
     public static bool IsLogObject(BacnetObjectTypes type) =>
         type is BacnetObjectTypes.OBJECT_TRENDLOG or BacnetObjectTypes.OBJECT_TREND_LOG_MULTIPLE or BacnetObjectTypes.OBJECT_EVENT_LOG;
 
     public async Task<IReadOnlyList<PropertyRow>> ReadAllPropertiesAsync(BacnetObjectId id, CancellationToken ct = default)
     {
         var rows = new List<PropertyRow>();
+        var named = NamedProps(id.type);
         try
         {
-            var refs = IsLogObject(id.type)
-                ? LogObjectProps.Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList()
+            var refs = named is not null
+                ? named.Select(p => new BacnetPropertyReference(p, ASN1.BACNET_ARRAY_ALL)).ToList()
                 : [new((uint)BacnetPropertyIds.PROP_ALL, ASN1.BACNET_ARRAY_ALL)];
             var results = await client.ReadPropertyMultipleAsync(device.Address, id, refs, cancellationToken: ct);
             foreach (var pv in results.SelectMany(r => r.values))
+            {
+                // We asked for these by name; an optional one the device does not have is not worth a row.
+                if (named is not null && IsUnknownProperty(pv.value)) continue;
                 rows.Add(ToRow(id.type, pv.property.propertyIdentifier, pv.value));
+            }
             return rows;
         }
         catch (Exception) when (!ct.IsCancellationRequested)
@@ -283,7 +308,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             rows.Clear(); // no RPM / no PROP_ALL: read the common ones one by one
         }
 
-        foreach (var p in IsLogObject(id.type) ? LogObjectProps : CommonProps)
+        foreach (var p in named ?? CommonProps)
         {
             try
             {
@@ -294,6 +319,10 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         }
         return rows;
     }
+
+    private static bool IsUnknownProperty(IList<BacnetValue>? values) =>
+        values is { Count: > 0 } && values[0].Tag == BacnetApplicationTags.BACNET_APPLICATION_TAG_ERROR
+        && values[0].Value is BacnetError { error_code: BacnetErrorCodes.ERROR_CODE_UNKNOWN_PROPERTY };
 
     /// <summary>Read one named property; throws the library's exception on error or timeout.</summary>
     public async Task<PropertyRow> ReadPropertyAsync(BacnetObjectId id, BacnetPropertyIds property, CancellationToken ct = default)
