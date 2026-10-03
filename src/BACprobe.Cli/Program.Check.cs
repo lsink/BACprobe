@@ -10,6 +10,7 @@ internal static partial class Program
         IReadOnlyList<DiscoveredDevice> devices)
     {
         var findings = new List<NetworkFinding>(conflicts);
+        findings.AddRange(DeviceHealth.Check(devices));
         string? jobName = null;
         if (opts.TryGetValue("job", out var jobPath) && jobPath is not null)
         {

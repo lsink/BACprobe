@@ -205,6 +205,10 @@
             <DataGridTextColumn Header="Vendor" Binding="{Binding Vendor}" Width="160" />
             <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="140" />
             <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" />
+            <DataGridTextColumn Header="Response" Binding="{Binding Response}" />
+            <DataGridTextColumn Header="Max APDU" Binding="{Binding MaxApdu}" />
+            <DataGridTextColumn Header="Segments" Binding="{Binding Segmentation}" />
+            <DataGridTextColumn Header="Clock" Binding="{Binding Clock}" />
           </DataGrid.Columns>
         </DataGrid>
         <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" />

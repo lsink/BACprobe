@@ -408,9 +408,18 @@ public sealed class SimulatedDeviceModel
     private static bool IsArray(BacnetPropertyIds p) =>
         p is BacnetPropertyIds.PROP_OBJECT_LIST or BacnetPropertyIds.PROP_PRIORITY_ARRAY or BacnetPropertyIds.PROP_STATE_TEXT;
 
+    /// <summary>How far this device's clock is from the PC's (positive = ahead), to exercise the clock check.</summary>
+    public TimeSpan ClockSkew { get; set; }
+
     private List<BacnetValue>? Raw(SimObject o, BacnetPropertyIds p)
     {
         if (p == BacnetPropertyIds.PROP_OBJECT_LIST && ReferenceEquals(o, _device)) return ObjectList();
+        if (ReferenceEquals(o, _device) && p is BacnetPropertyIds.PROP_LOCAL_DATE or BacnetPropertyIds.PROP_LOCAL_TIME)
+        {
+            var now = DateTime.Now + ClockSkew;
+            return [new BacnetValue(p == BacnetPropertyIds.PROP_LOCAL_DATE ? BacnetApplicationTags.BACNET_APPLICATION_TAG_DATE
+                : BacnetApplicationTags.BACNET_APPLICATION_TAG_TIME, now)];
+        }
         if (p == BacnetPropertyIds.PROP_STATUS_FLAGS && HasStatus(o))
             return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt((uint)FlagsOf(o), 4))];
         if (o.Trend is { } t)

@@ -52,6 +52,16 @@ public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
     public string Model => d.ModelName ?? "-";
     public string Firmware => d.FirmwareRevision ?? "-";
     public string Name => d.ObjectName ?? "-";
+    public string Response => d.ResponseTime is { } r ? $"{r.TotalMilliseconds:0} ms" : "-";
+    public string Segmentation => d.Segmentation switch
+    {
+        BacnetSegmentations.SEGMENTATION_BOTH => "both",
+        BacnetSegmentations.SEGMENTATION_TRANSMIT => "send only",
+        BacnetSegmentations.SEGMENTATION_RECEIVE => "receive only",
+        _ => "none",
+    };
+    public string MaxApdu => d.MaxApdu.ToString();
+    public string Clock => d.ClockSkew is { } s ? (s.Duration() < DeviceHealth.ClockSkewLimit ? "ok" : DeviceHealth.DescribeSkew(s)) : "-";
 
     /// <summary>The device's details were read: show them.</summary>
     public void Refresh() => OnPropertyChanged(string.Empty);
@@ -456,6 +466,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var findings = new List<NetworkFinding>(conflicts);
         findings.AddRange(map.Findings);
+        findings.AddRange(DeviceHealth.Check(found));
 
         NetworkMapLines.Clear();
         foreach (var line in map.Lines(SelectedAdapter?.Info.Cidr ?? "this subnet")) NetworkMapLines.Add(line);

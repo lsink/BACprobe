@@ -14,6 +14,12 @@ public sealed class DiscoveredDevice
     public string? VendorName { get; set; }
     public string? ModelName { get; set; }
     public string? FirmwareRevision { get; set; }
+    /// <summary>How long the first read of this device took (includes any retry waits). Null if it never answered.</summary>
+    public TimeSpan? ResponseTime { get; set; }
+
+    /// <summary>The device's clock minus this PC's clock at the moment it was read; null when the device has no readable clock.</summary>
+    public TimeSpan? ClockSkew { get; set; }
+
     /// <summary>Set when enrichment failed entirely; text is meant for the user.</summary>
     public string? EnrichError { get; set; }
 

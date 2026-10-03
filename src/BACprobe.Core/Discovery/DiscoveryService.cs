@@ -140,10 +140,24 @@ public sealed class DiscoveryService : IDisposable
         string? lastError = null;
         try
         {
-            var refs = Props.Select(p => new BacnetPropertyReference((uint)p, System.IO.BACnet.Serialize.ASN1.BACNET_ARRAY_ALL)).ToList();
+            // The clock rides along with the first read: a device without one just answers those two properties with an error.
+            var refs = Props.Append(BacnetPropertyIds.PROP_LOCAL_DATE).Append(BacnetPropertyIds.PROP_LOCAL_TIME)
+                .Select(p => new BacnetPropertyReference((uint)p, System.IO.BACnet.Serialize.ASN1.BACNET_ARRAY_ALL)).ToList();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var result = await _client.ReadPropertyMultipleAsync(d.Address, oid, refs, cancellationToken: ct);
+            clock.Stop();
+            var pcNow = DateTime.Now;
+            d.ResponseTime = clock.Elapsed;
+            DateTime? date = null, time = null;
             foreach (var pv in result.SelectMany(r => r.values))
-                Apply(d, (BacnetPropertyIds)pv.property.propertyIdentifier, pv.value?.FirstOrDefault());
+            {
+                var prop = (BacnetPropertyIds)pv.property.propertyIdentifier;
+                var first = pv.value?.FirstOrDefault();
+                if (prop == BacnetPropertyIds.PROP_LOCAL_DATE) date = AsDateTime(first);
+                else if (prop == BacnetPropertyIds.PROP_LOCAL_TIME) time = AsDateTime(first);
+                else Apply(d, prop, first);
+            }
+            if (DeviceHealth.CombineClock(date, time) is { } deviceClock) d.ClockSkew = deviceClock - pcNow;
             return;
         }
         catch (Exception ex) when (!ct.IsCancellationRequested && BacnetFailure.IsTimeout(ex))
@@ -166,6 +180,9 @@ public sealed class DiscoveryService : IDisposable
             d.EnrichError = $"Could not read device properties ({lastError}). " +
                             "The device may be busy, or reachable only through a router that is dropping the request; try again.";
     }
+
+    private static DateTime? AsDateTime(BacnetValue? v) =>
+        v is { Value: DateTime dt, Tag: not BacnetApplicationTags.BACNET_APPLICATION_TAG_ERROR } ? dt : null;
 
     private static void Apply(DiscoveredDevice d, BacnetPropertyIds prop, BacnetValue? v)
     {

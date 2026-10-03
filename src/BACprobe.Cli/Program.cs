@@ -15,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--skew <minutes>] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -73,6 +73,7 @@ internal static partial class Program
                    --objects n adds n spare points to each device, so its object list needs segmented replies (a big controller).
                    --outage 20,25 makes the first device go silent after 20 s for 25 s and forget its COV subscriptions (a restart).
                    --faults gives the first device problems to find: AI 2 open loop (reads -40), AI 1 in alarm, BV 1 out of service.
+                   --skew 47 sets the first device's clock 47 minutes ahead of this PC, for the device clock check.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations. --bbmd-peer adds a second
                    BBMD (next port) with table mistakes for 'bacprobe bbmd' to find: listed one-hop, and it does not list the first back.
@@ -201,11 +202,11 @@ internal static partial class Program
 
         Console.WriteLine();
         var addressWidth = Math.Max(22, devices.Max(d => d.AddressText.Length)); // routed devices have longer addresses
-        Console.WriteLine($"{"Instance",-9} {"Address".PadRight(addressWidth)} {"Vendor",-24} {"Model",-18} {"Firmware",-12} Name");
+        Console.WriteLine($"{"Instance",-9} {"Address".PadRight(addressWidth)} {"Vendor",-24} {"Model",-18} {"Firmware",-12} {"Reply",7} Name");
         foreach (var d in devices)
         {
             Console.WriteLine($"{d.InstanceId,-9} {d.AddressText.PadRight(addressWidth)} {d.VendorName ?? $"vendor {d.VendorId}",-24} " +
-                              $"{d.ModelName ?? "-",-18} {d.FirmwareRevision ?? "-",-12} {d.ObjectName ?? "-"}");
+                              $"{d.ModelName ?? "-",-18} {d.FirmwareRevision ?? "-",-12} {(d.ResponseTime is { } rt ? $"{rt.TotalMilliseconds:0} ms" : "-"),7} {d.ObjectName ?? "-"}");
             if (d.EnrichError is not null) Console.WriteLine($"          ! {d.EnrichError}");
         }
         var map = svc.BuildNetworkMap(devices, scanWasFiltered: low >= 0);
@@ -259,6 +260,7 @@ internal static partial class Program
                 var legacy = opts.ContainsKey("no-rpm") && i == count - 1;
                 var model = SimulatedDeviceModel.CreateSample((uint)(first + i), null, stuck: opts.ContainsKey("stuck"), protectedSetpoint: opts.ContainsKey("protected"));
                 if (i == 0 && opts.ContainsKey("faults")) model.AddSampleProblems();
+                if (i == 0 && opts.ContainsKey("skew")) model.ClockSkew = TimeSpan.FromMinutes(IntOpt(opts, "skew", 0));
                 for (var k = 1; k <= padding; k++) // a big controller: its object list no longer fits in one packet
                     model.AddAnalogValue((uint)(1000 + k), $"Spare Value {k}", "Padding point", 0, BacnetUnitsId.UNITS_NO_UNITS, commandable: false);
                 var sim = new SimulatedDevice(adapter, model, supportRpm: !legacy, drift: !opts.ContainsKey("still"),
