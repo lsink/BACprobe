@@ -23,7 +23,7 @@ internal static partial class Program
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe routers   [--adapter <ip>] [--wait <seconds>]
           bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]
-          bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400] [--seconds 30] [--frames] [--record <capture.bin>]
+          bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400|auto] [--seconds 30] [--frames] [--record <capture.bin>]
           bacprobe mstp-monitor --make-sample <capture.bin> [--force]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]

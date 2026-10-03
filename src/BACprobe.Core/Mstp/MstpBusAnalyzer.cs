@@ -170,6 +170,12 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
             return list;
         }
 
+        if (Baud <= 19200)
+            list.Add(new(FindingSeverity.Info, $"The trunk runs at {Baud} baud, which is slow",
+                "At this rate every frame takes four to eight times longer than at 76800, so busy trunks answer slowly.",
+                "An old install, or one device that cannot go faster and holds everyone back.",
+                "If every device supports 38400 or 76800, raise the rate on all of them together."));
+
         var attempts = Frames + Errors;
         var errorRate = (double)Errors / attempts;
         if (errorRate >= 0.01)

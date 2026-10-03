@@ -17,6 +17,8 @@ internal static partial class Program
         {
             var ports = SerialPort.GetPortNames();
             Console.WriteLine(ports.Length == 0 ? "No serial ports found. Plug in the USB-RS485 adapter and install its driver." : string.Join(Environment.NewLine, ports.Order()));
+            if (OperatingSystem.IsWindows())
+                foreach (var l in FtdiLatency.ReadAll()) Console.WriteLine(l.Verdict);
             return ports.Length == 0 ? 3 : 0;
         }
 
@@ -28,8 +30,17 @@ internal static partial class Program
             return 0;
         }
 
+        var autoBaud = opts.TryGetValue("baud", out var baudText) && string.Equals(baudText, "auto", StringComparison.OrdinalIgnoreCase);
+        if (autoBaud)
+        {
+            if (!opts.TryGetValue("port", out var autoPort) || autoPort is null)
+                return Fail("--baud auto needs a port: bacprobe mstp-monitor --port COM5 --baud auto");
+            var detected = DetectBaud(autoPort);
+            if (detected is null) return 3;
+            opts["baud"] = detected.Value.ToString();
+        }
         var baud = IntOpt(opts, "baud", 38400);
-        if (baud <= 0) return Fail("--baud needs a number such as 38400.");
+        if (baud <= 0) return Fail("--baud needs a number such as 38400, or 'auto'.");
         var seconds = IntOpt(opts, "seconds", 30);
         var showFrames = opts.ContainsKey("frames");
 
@@ -68,6 +79,10 @@ internal static partial class Program
         {
             if (!opts.TryGetValue("port", out var portName) || portName is null)
                 return Fail("Say which serial port to listen on: bacprobe mstp-monitor --port COM5 [--baud 38400]. 'bacprobe mstp-monitor --list' shows the ports.");
+
+            if (OperatingSystem.IsWindows())
+                foreach (var l in FtdiLatency.ReadAll().Where(l => string.Equals(l.PortName, portName, StringComparison.OrdinalIgnoreCase) && l.IsTooHigh))
+                    Console.WriteLine("Warning: " + l.Verdict);
 
             using var port = new SerialPort(portName, baud, Parity.None, 8, StopBits.One) { ReadTimeout = 100 };
             try { port.Open(); }
@@ -109,6 +124,44 @@ internal static partial class Program
     }
 
     private static long _t0;
+
+    /// <summary>Listen for a couple of seconds at each common baud rate and pick the one that decodes frames. Receive-only.</summary>
+    private static int? DetectBaud(string portName)
+    {
+        const int secondsEach = 3;
+        Console.WriteLine($"Finding the trunk's baud rate on {portName}: listening {secondsEach} s at each of {string.Join(", ", MstpBaudDetector.Candidates)}...");
+        var trials = new List<BaudTrial>();
+        foreach (var candidate in MstpBaudDetector.Candidates)
+        {
+            var parser = new MstpFrameParser();
+            int good = 0, bad = 0;
+            try
+            {
+                using var port = new SerialPort(portName, candidate, Parity.None, 8, StopBits.One) { ReadTimeout = 100 };
+                port.Open();
+                var end = Stopwatch.GetTimestamp() + secondsEach * Stopwatch.Frequency;
+                var buffer = new byte[4096];
+                while (Stopwatch.GetTimestamp() < end)
+                {
+                    int n;
+                    try { n = port.Read(buffer, 0, buffer.Length); }
+                    catch (TimeoutException) { continue; }
+                    foreach (var item in parser.Feed(buffer.AsSpan(0, n), Stopwatch.GetTimestamp()))
+                        if (item is MstpFrame) good++; else bad++;
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or ArgumentException or InvalidOperationException)
+            {
+                Console.Error.WriteLine($"Could not open {portName}: {ex.Message}\n  Likely cause: another program has the port open, or the adapter was unplugged.\n  Next step:    close the other program and try again.");
+                return null;
+            }
+            trials.Add(new BaudTrial(candidate, good, bad, parser.DiscardedBytes));
+            Console.WriteLine($"  {candidate,6} baud: {good} good frames, {bad} damaged");
+        }
+        var picked = MstpBaudDetector.Pick(trials);
+        Console.WriteLine(MstpBaudDetector.Explain(trials, picked));
+        return picked;
+    }
 
     private static void PrintMstpReport(MstpBusAnalyzer a)
     {
