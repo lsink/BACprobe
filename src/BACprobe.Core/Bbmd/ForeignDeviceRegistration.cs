@@ -61,6 +61,7 @@ public sealed class ForeignDeviceRegistration : IDisposable
     {
         _link = link;
         Target = target;
+        RenewEvery = target.RenewInterval;
         _link.ResultReceived += OnResult;
     }
 
@@ -74,6 +75,15 @@ public sealed class ForeignDeviceRegistration : IDisposable
     /// <summary>Raised when the state changes after the first attempt, e.g. a renewal that failed.</summary>
     public event Action? Changed;
 
+    /// <summary>How often to renew while registered (half the TTL by default).</summary>
+    public TimeSpan RenewEvery { get; set; }
+
+    /// <summary>After a renewal fails, how long to wait before trying again. Retries continue until it works or this is disposed.</summary>
+    public TimeSpan RetryEvery { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long a renewal waits for the BBMD's answer.</summary>
+    public TimeSpan RenewReplyTimeout { get; set; } = TimeSpan.FromSeconds(3);
+
     public async Task<BbmdState> RegisterAsync(TimeSpan? timeout = null, int attempts = 2, CancellationToken ct = default)
     {
         var wait = timeout ?? TimeSpan.FromSeconds(3);
@@ -83,7 +93,7 @@ public sealed class ForeignDeviceRegistration : IDisposable
             state = await SendAndWaitAsync(wait, ct);
 
         Set(state, Describe(state, wait, attempts));
-        if (state == BbmdState.Registered) ScheduleRenewal();
+        if (state == BbmdState.Registered) ScheduleRenewal(RenewEvery);
         return state;
     }
 
@@ -134,25 +144,38 @@ public sealed class ForeignDeviceRegistration : IDisposable
         }
     }
 
-    private void ScheduleRenewal()
+    private void ScheduleRenewal(TimeSpan after)
     {
         lock (_lock)
         {
             if (_disposed) return;
             _renewTimer?.Dispose();
-            _renewTimer = new Timer(_ => _ = RenewAsync(), null, Target.RenewInterval, Timeout.InfiniteTimeSpan);
+            _renewTimer = new Timer(_ => _ = RenewAsync(), null, after, Timeout.InfiniteTimeSpan);
         }
     }
 
     private async Task RenewAsync()
     {
         if (_disposed) return;
-        var wait = TimeSpan.FromSeconds(3);
+        var wait = RenewReplyTimeout;
         var state = BbmdState.NoAnswer;
         for (var i = 0; i < 2 && state == BbmdState.NoAnswer; i++) state = await SendAndWaitAsync(wait, default);
+        if (_disposed) return;
 
-        if (state == BbmdState.Registered) ScheduleRenewal();
-        else Set(state, "Lost the BBMD registration while renewing. " + Describe(state, wait, 2));
+        if (state == BbmdState.Registered)
+        {
+            // Back after a failed renewal: say so. A routine renewal changes nothing the user can see.
+            if (State != BbmdState.Registered)
+                Set(state, $"Registration with BBMD {Target} restored. " + Describe(state, wait, 2));
+            ScheduleRenewal(RenewEvery);
+        }
+        else
+        {
+            // Keep trying: a VPN reconnect or a short network drop should not cost the remote subnets for the rest of the visit.
+            Set(state, "Lost the BBMD registration while renewing. " + Describe(state, wait, 2) +
+                       $"\n  BACprobe keeps retrying every {RetryEvery.TotalSeconds:0} s.");
+            ScheduleRenewal(RetryEvery);
+        }
     }
 
     private string Describe(BbmdState state, TimeSpan wait, int attempts) => state switch

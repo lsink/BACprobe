@@ -156,4 +156,47 @@ public class ForeignDeviceRegistrationTests
         reg.RemoteWhoIs(1000, 2000);
         Assert.Equal([(1000, 2000)], link.WhoIs);
     }
+
+    private static async Task WaitFor(ForeignDeviceRegistration reg, BbmdState state)
+    {
+        for (var i = 0; i < 100 && reg.State != state; i++) await Task.Delay(20);
+        Assert.Equal(state, reg.State);
+    }
+
+    [Fact]
+    public async Task A_failed_renewal_keeps_retrying_and_recovers()
+    {
+        var link = new FakeLink { Reply = BacnetBvlcResults.BVLC_RESULT_SUCCESSFUL_COMPLETION };
+        using var reg = new ForeignDeviceRegistration(link, Target)
+        {
+            RenewEvery = TimeSpan.FromMilliseconds(50), RetryEvery = TimeSpan.FromMilliseconds(50), RenewReplyTimeout = Quick,
+        };
+        Assert.Equal(BbmdState.Registered, await reg.RegisterAsync(Quick));
+
+        link.Reply = null; // the BBMD goes quiet (VPN reconnecting)
+        await WaitFor(reg, BbmdState.NoAnswer);
+        Assert.Contains("keeps retrying", reg.Message);
+
+        link.Reply = BacnetBvlcResults.BVLC_RESULT_SUCCESSFUL_COMPLETION; // and comes back
+        await WaitFor(reg, BbmdState.Registered);
+        Assert.Contains("restored", reg.Message);
+    }
+
+    [Fact]
+    public async Task Disposing_stops_the_retries()
+    {
+        var link = new FakeLink { Reply = BacnetBvlcResults.BVLC_RESULT_SUCCESSFUL_COMPLETION };
+        var reg = new ForeignDeviceRegistration(link, Target)
+        {
+            RenewEvery = TimeSpan.FromMilliseconds(30), RetryEvery = TimeSpan.FromMilliseconds(30), RenewReplyTimeout = TimeSpan.FromMilliseconds(30),
+        };
+        await reg.RegisterAsync(Quick);
+        link.Reply = null;
+        await WaitFor(reg, BbmdState.NoAnswer);
+        reg.Dispose();
+        await Task.Delay(200); // let a retry that was already running finish
+        var sent = link.Sent;
+        await Task.Delay(200);
+        Assert.Equal(sent, link.Sent);
+    }
 }
