@@ -27,7 +27,7 @@ Fully local: no cloud calls, no telemetry.
 
 ## Not yet
 - MS/TP (needs an FTDI USB-RS485 adapter; planned for a later phase)
-- Schedules, Trend Log Multiple, event logs
+- Trend Log Multiple and event logs. (Schedules and calendars are intentionally left out: this is a troubleshooting tool.)
 - Writes to properties other than Present Value
 - EDE state-text, limit and COV columns (left empty); the EDE layout has not been checked against a real EDE consumer
 

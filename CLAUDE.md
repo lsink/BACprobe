@@ -9,6 +9,7 @@ Full research and plan: https://claude.ai/code/artifact/9a36dbdb-bbd9-4b84-9254-
 - Windows only. C# on .NET 10, WPF UI (Fluent theme via `ThemeMode`; suppress WPF0001 if needed).
 - Solo developer (Larry, a BAS/BACnet field tech). Keep each phase small and shippable.
 - Standard BACnet objects only. Proprietary objects/properties show as "vendor-specific" with raw values.
+- Schedules and calendars are deliberately NOT planned: Larry's field experience is that a BACnet troubleshooting tool does not need them. Parked on the back burner; do not propose them again unless asked.
 - Field sites mostly run MS/TP at 38.4k or 76.8k, so active MS/TP master over an FTDI USB-RS485 adapter is in scope (Phase 3). Warn at 19.2k and below.
 
 ## Solution layout
