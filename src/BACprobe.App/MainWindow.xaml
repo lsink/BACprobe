@@ -103,6 +103,9 @@
                    ToolTip="Optional. Only for devices on other subnets. Ask the site contact for the BBMD's IP address." />
         <TextBox Text="{Binding BbmdText, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="8,0,4,0"
                  ToolTip="IP address, or IP:port, of the site's BBMD. Leave empty for the local subnet only." />
+        <Button Content="Check BBMD..." Padding="10,4" Margin="0,0,10,0" Command="{Binding CheckBbmdCommand}"
+                AutomationProperties.Name="Check BBMD"
+                ToolTip="Read this BBMD's broadcast and foreign device tables (and every peer's) and flag what looks wrong: one-way peers, missing entries, one-hop masks. Changes nothing." />
         <TextBlock Text="TTL (s):" VerticalAlignment="Center" />
         <TextBox Text="{Binding TtlText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="4,0,12,0"
                  ToolTip="How long the BBMD keeps you registered. BACprobe renews automatically." />

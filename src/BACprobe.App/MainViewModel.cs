@@ -191,7 +191,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ScanCommand), nameof(CheckBbmdCommand))]
     private AdapterChoice? _selectedAdapter;
 
     [ObservableProperty]
@@ -375,7 +375,27 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _jobName = "";
     [ObservableProperty] private string _jobNotes = "";
     [ObservableProperty] private string _offlineBanner = "";
-    [ObservableProperty] private string _bbmdText = "";
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CheckBbmdCommand))]
+    private string _bbmdText = "";
+
+    /// <summary>Set by the window: opens the BBMD check.</summary>
+    public Action<BbmdCheckViewModel> ShowBbmdCheck { get; set; } = _ => { };
+
+    private bool CanCheckBbmd() => SelectedAdapter is not null && BbmdText.Trim().Length > 0;
+
+    /// <summary>Read the BBMD's tables and its peers' and say what looks wrong. Needs no scan first; changes nothing.</summary>
+    [RelayCommand(CanExecute = nameof(CanCheckBbmd))]
+    private void CheckBbmd()
+    {
+        if (SelectedAdapter is null) return;
+        if (!BbmdTarget.TryParse(BbmdText, BbmdTarget.DefaultTtlSeconds, out var target, out var error))
+        {
+            Status = error;
+            return;
+        }
+        ShowBbmdCheck(new BbmdCheckViewModel(SelectedAdapter.Info, target!));
+    }
     [ObservableProperty] private string _ttlText = BbmdTarget.DefaultTtlSeconds.ToString();
     [ObservableProperty] private string _bbmdStatus = "";
     [ObservableProperty] private string _lowText = "";

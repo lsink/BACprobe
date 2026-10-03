@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using BACprobe.Core.Bbmd;
 using BACprobe.Core.Networking;
 
 namespace BACprobe.Core.Simulation;
@@ -10,7 +11,8 @@ namespace BACprobe.Core.Simulation;
 /// Control port (default 47809, so it does not fight the BACnet port): Register-Foreign-Device is answered with a
 /// BVLC-Result, and Distribute-Broadcast-To-Network is re-broadcast on the local subnet.
 /// It also listens on 47808 and relays broadcasts it hears (such as I-Am from local devices) to every registered
-/// foreign device as Forwarded-NPDU, which is what a real BBMD does.
+/// foreign device as Forwarded-NPDU, which is what a real BBMD does. It answers Read-Broadcast-Distribution-Table with the
+/// table it was given (by default just itself) and Read-Foreign-Device-Table with who is registered.
 /// </summary>
 public sealed class SimulatedBbmd : IDisposable
 {
@@ -23,7 +25,8 @@ public sealed class SimulatedBbmd : IDisposable
     private readonly int _controlPort;
     private readonly int _bacnetPort;
     private readonly bool _refuse;
-    private readonly Dictionary<IPEndPoint, DateTime> _foreignDevices = [];
+    private readonly Dictionary<IPEndPoint, (DateTime Expiry, ushort Ttl)> _foreignDevices = [];
+    private readonly IReadOnlyList<BdtEntry> _broadcastTable;
     private readonly Lock _lock = new();
     private readonly CancellationTokenSource _cts = new();
     private Socket? _control;
@@ -31,19 +34,24 @@ public sealed class SimulatedBbmd : IDisposable
 
     public Action<string>? Log { get; set; }
 
-    /// <param name="refuseRegistrations">Answer every registration with a NAK, like a BBMD with foreign devices disabled.</param>
+    /// <param name="refuseRegistrations">Answer every registration (and foreign device table read) with a NAK, like a BBMD with foreign devices disabled.</param>
+    /// <param name="broadcastTable">What Read-Broadcast-Distribution-Table returns; null for just this BBMD, two-hop.</param>
     public SimulatedBbmd(AdapterInfo adapter, int controlPort = 47809, bool refuseRegistrations = false,
-        int bacnetPort = PreflightRules.BacnetPort)
+        int bacnetPort = PreflightRules.BacnetPort, IReadOnlyList<BdtEntry>? broadcastTable = null)
     {
         _adapter = adapter;
         _controlPort = controlPort;
         _bacnetPort = bacnetPort;
         _refuse = refuseRegistrations;
+        _broadcastTable = broadcastTable ?? [new BdtEntry(new IPEndPoint(adapter.Address, controlPort), IPAddress.Broadcast)];
     }
+
+    /// <summary>Where this BBMD answers: the address to give 'bacprobe bbmd' or the app's BBMD box.</summary>
+    public IPEndPoint EndPoint => new(_adapter.Address, _controlPort);
 
     public int RegisteredCount
     {
-        get { lock (_lock) return _foreignDevices.Count(kv => kv.Value > DateTime.UtcNow); }
+        get { lock (_lock) return _foreignDevices.Count(kv => kv.Value.Expiry > DateTime.UtcNow); }
     }
 
     public void Start()
@@ -92,7 +100,7 @@ public sealed class SimulatedBbmd : IDisposable
                     SendResult(_control!, from, ResultRegisterNak);
                     return;
                 }
-                lock (_lock) _foreignDevices[from] = DateTime.UtcNow + TimeSpan.FromSeconds(ttl) + Grace;
+                lock (_lock) _foreignDevices[from] = (DateTime.UtcNow + TimeSpan.FromSeconds(ttl) + Grace, ttl);
                 Log?.Invoke($"[BBMD] Register-Foreign-Device from {from} (ttl {ttl}s) -> OK ({RegisteredCount} registered)");
                 SendResult(_control!, from, ResultSuccess);
                 break;
@@ -107,6 +115,28 @@ public sealed class SimulatedBbmd : IDisposable
             case FnDistribute:
                 Log?.Invoke($"[BBMD] Distribute-Broadcast-To-Network from unregistered {from} -> ignored");
                 break;
+
+            case BvlcTables.FnReadBdt:
+                Log?.Invoke($"[BBMD] Read-Broadcast-Distribution-Table from {from} -> {_broadcastTable.Count} entr(ies)");
+                _control!.SendTo(BvlcTables.EncodeBdtAck(_broadcastTable), from);
+                break;
+
+            case BvlcTables.FnReadFdt when _refuse:
+                Log?.Invoke($"[BBMD] Read-Foreign-Device-Table from {from} -> NAK (foreign devices refused)");
+                SendResult(_control!, from, BvlcTables.ReadFdtNak);
+                break;
+
+            case BvlcTables.FnReadFdt:
+                List<FdtEntry> table;
+                lock (_lock)
+                {
+                    var now = DateTime.UtcNow;
+                    table = [.. _foreignDevices.Where(kv => kv.Value.Expiry > now)
+                        .Select(kv => new FdtEntry(kv.Key, kv.Value.Ttl, (ushort)Math.Min(ushort.MaxValue, (kv.Value.Expiry - now).TotalSeconds)))];
+                }
+                Log?.Invoke($"[BBMD] Read-Foreign-Device-Table from {from} -> {table.Count} entr(ies)");
+                _control!.SendTo(BvlcTables.EncodeFdtAck(table), from);
+                break;
         }
     }
 
@@ -119,7 +149,7 @@ public sealed class SimulatedBbmd : IDisposable
         lock (_lock)
         {
             var now = DateTime.UtcNow;
-            foreach (var dead in _foreignDevices.Where(kv => kv.Value <= now).Select(kv => kv.Key).ToList())
+            foreach (var dead in _foreignDevices.Where(kv => kv.Value.Expiry <= now).Select(kv => kv.Key).ToList())
                 _foreignDevices.Remove(dead);
             targets = [.. _foreignDevices.Keys];
         }
@@ -132,7 +162,7 @@ public sealed class SimulatedBbmd : IDisposable
 
     private bool IsRegistered(IPEndPoint ep)
     {
-        lock (_lock) return _foreignDevices.TryGetValue(ep, out var expiry) && expiry > DateTime.UtcNow;
+        lock (_lock) return _foreignDevices.TryGetValue(ep, out var entry) && entry.Expiry > DateTime.UtcNow;
     }
 
     private static void SendResult(Socket s, IPEndPoint to, ushort result)

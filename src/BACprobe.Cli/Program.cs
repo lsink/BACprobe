@@ -15,13 +15,14 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--bbmd [--bbmd-refuse] [--bbmd-port <n>]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
           bacprobe job show  <site.bacprobe> [--device <n>] [--log]
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe routers   [--adapter <ip>] [--wait <seconds>]
+          bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
@@ -37,6 +38,8 @@ internal static partial class Program
                    in the current folder; an existing file is never overwritten without --force.
         routers    Ask for routers and list the networks each one says it can reach. 'discover' also prints a network map
                    (which devices are on which network) and flags networks that look wrong.
+        bbmd       Read a BBMD's broadcast and foreign device tables (and each listed peer's broadcast table) and flag what looks
+                   wrong: one-way peers, missing or duplicate entries, one-hop masks, two BBMDs on one subnet. Read-only.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
                    (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.
@@ -65,7 +68,8 @@ internal static partial class Program
                    --outage 20,25 makes the first device go silent after 20 s for 25 s and forget its COV subscriptions (a restart).
                    --faults gives the first device problems to find: AI 2 open loop (reads -40), AI 1 in alarm, BV 1 out of service.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
-                   --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations.
+                   --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations. --bbmd-peer adds a second
+                   BBMD (next port) with table mistakes for 'bacprobe bbmd' to find: listed one-hop, and it does not list the first back.
         """;
 
     private static async Task<int> Main(string[] args)
@@ -94,6 +98,7 @@ internal static partial class Program
                 "trend" => await TrendAsync(opts),
                 "find" => await FindAsync(opts),
                 "routers" => await RoutersAsync(opts),
+                "bbmd" => await BbmdCheckAsync(opts),
                 "export" => await ExportAsync(opts),
                 "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),
@@ -213,14 +218,26 @@ internal static partial class Program
 
         var sims = new List<SimulatedDevice>();
         var routers = new List<SimulatedRouter>();
-        SimulatedBbmd? bbmdSim = null;
+        SimulatedBbmd? bbmdSim = null, peerSim = null;
         Timer? outageTimer = null;
         try
         {
             if (opts.ContainsKey("bbmd") || opts.ContainsKey("bbmd-refuse"))
             {
                 var bbmdPort = IntOpt(opts, "bbmd-port", 47809);
-                bbmdSim = new SimulatedBbmd(adapter, bbmdPort, refuseRegistrations: opts.ContainsKey("bbmd-refuse"))
+                IReadOnlyList<BACprobe.Core.Bbmd.BdtEntry>? table = null;
+                if (opts.ContainsKey("bbmd-peer"))
+                {
+                    // Two classic mistakes for 'bacprobe bbmd' to find: the peer is listed one-hop (a directed broadcast,
+                    // here with a /24 mask), and the peer's own table does not list this BBMD back.
+                    var self = new IPEndPoint(adapter.Address, bbmdPort);
+                    var peer = new IPEndPoint(adapter.Address, bbmdPort + 1);
+                    table = [new(self, IPAddress.Broadcast), new(peer, IPAddress.Parse("255.255.255.0"))];
+                    peerSim = new SimulatedBbmd(adapter, bbmdPort + 1) { Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} (peer) {line}") };
+                    peerSim.Start();
+                    Console.WriteLine($"Simulating a peer BBMD on {peer} whose table lists only itself.");
+                }
+                bbmdSim = new SimulatedBbmd(adapter, bbmdPort, refuseRegistrations: opts.ContainsKey("bbmd-refuse"), broadcastTable: table)
                 {
                     Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),
                 };
@@ -296,6 +313,7 @@ internal static partial class Program
             foreach (var s in sims) s.Dispose();
             foreach (var r in routers) r.Dispose();
             bbmdSim?.Dispose();
+            peerSim?.Dispose();
             return Fail($"Could not start the simulator: {ex.Message}\n" +
                         "  Likely cause: another program holds UDP 47808 exclusively.\n" +
                         "  Next step:    run 'bacprobe preflight' and close the program it names.");
@@ -310,6 +328,7 @@ internal static partial class Program
         foreach (var s in sims) s.Dispose();
         foreach (var r in routers) r.Dispose();
         bbmdSim?.Dispose();
+        peerSim?.Dispose();
         return 0;
     }
 
