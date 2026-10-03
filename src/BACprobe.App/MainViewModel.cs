@@ -286,6 +286,45 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var name = device.Name == "-" ? $"Device {device.Instance}" : device.Name;
         ShowTrend(new TrendViewModel(_svc.OpenTrendLogs(device.Device), SelectedObject.Summary.Id, name, device.Instance, PickTrendFile));
     }
+    // Quick-copy (right-click a device or point): things a tech pastes into a ticket, a chat or Wireshark.
+    private void CopyText(string? text, string what)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            Status = $"Nothing to copy for {what}. Likely cause: this device has no IP address (it is behind a router or on MS/TP). Next step: copy the router's address instead.";
+            return;
+        }
+        try
+        {
+            Clipboard.SetText(text);
+            Status = $"Copied {what}: {text}";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not copy: {ex.Message} Likely cause: another program is holding the clipboard. Next step: try again.";
+        }
+    }
+
+    [RelayCommand] private void CopyDeviceAddress() => CopyText(SelectedDevice?.Address, "the device address");
+
+    [RelayCommand]
+    private void CopyDeviceFilter() =>
+        CopyText(SelectedDevice is { } d ? QuickCopy.WiresharkFilterForAddress(d.Address) : null, "a Wireshark filter for the device");
+
+    [RelayCommand]
+    private void CopyObjectId() =>
+        CopyText(SelectedObject is { } o ? $"{BacnetNames.ObjectTypeShort(o.Summary.Id.type)}:{o.Summary.Id.instance}" : null, "the object ID");
+
+    [RelayCommand] private void CopyObjectName() => CopyText(SelectedObject?.Summary.Name, "the point name");
+
+    [RelayCommand] private void CopyObjectValue() => CopyText(SelectedObject?.Value, "the value");
+
+    [RelayCommand]
+    private void CopyObjectFilter() =>
+        CopyText(SelectedDevice is { } d && SelectedObject is { } o
+            ? QuickCopy.WiresharkFilterForObject(d.Address, (uint)o.Summary.Id.type, o.Summary.Id.instance) : null,
+            "a Wireshark filter for the point");
+
     [ObservableProperty] private StateChoice? _selectedStateChoice;
 
     partial void OnSelectedStateChoiceChanged(StateChoice? value)
@@ -296,7 +335,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel))]
     private bool _canWriteSelected;
+
+    /// <summary>Read-only mode: browsing and reading only. The override panel is hidden and writes are refused.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel))]
+    [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
+    private bool _readOnlyMode = ReadOnlySetting.Load();
+
+    partial void OnReadOnlyModeChanged(bool value) => ReadOnlySetting.Save(value);
+
+    public bool ShowOverridePanel => CanWriteSelected && !ReadOnlyMode;
 
     [ObservableProperty] private DeviceRow? _selectedDevice;
     [ObservableProperty] private ObjectRow? _selectedObject;
@@ -975,10 +1025,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private static string SafeFileName(string name) =>
         string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 
-    [RelayCommand(CanExecute = nameof(CanWriteSelected))]
+    [RelayCommand(CanExecute = nameof(ShowOverridePanel))]
     private Task WriteSelectedAsync() => DoWriteAsync(release: false);
 
-    [RelayCommand(CanExecute = nameof(CanWriteSelected))]
+    [RelayCommand(CanExecute = nameof(ShowOverridePanel))]
     private Task ReleaseSelectedAsync() => DoWriteAsync(release: true);
 
 
@@ -987,6 +1037,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var row = SelectedObject;
         var deviceRow = SelectedDevice;
         if (_writer is null || _svc is null || row is null || deviceRow is null) return;
+        if (ReadOnlyMode)
+        {
+            Status = "Read-only mode is on, so nothing was written. Untick Read-only at the top to make changes.";
+            return;
+        }
 
         var obj = row.Summary;
         BacnetValue? value = null;
