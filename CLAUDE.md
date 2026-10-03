@@ -78,6 +78,12 @@ Routers / network map: `AddressInfo` (the library reports a device behind a rout
 Write explainer: `DeviceWriter.ExecuteAsync` returns `WriteOutcome.Explanation` (a `PromptContent`). After an accepted write it re-reads the point for up to 3 s (`PointProber`) and `WriteExplainer.ExplainIneffective` names why nothing changed; after a refusal it probes once and `ExplainFailure` explains. Pure logic in `WriteExplainer`; simulator can misbehave via `--stuck` (bv:1 held at priority 5) and `--protected` (av:1 refuses); the damper (ao:1) enforces 0-100. Unverified against real hardware.
 
 Learned the hard way:
+- `BacnetClient.MaxSegments` defaults to MAX_SEG0 ("send me nothing bigger than one packet"): big object lists and PROP_ALL
+  then abort. `DiscoveryService` sets MAX_SEG65. Never ask the device object for PROP_ALL either (it drags in Object_List); `DeviceBrowser` names its properties.
+- After 3 timeouts in a row (`BacnetFailure.MaxTimeoutsInARow`) a device counts as not answering: reads, COV subscribe/renew stop
+  instead of waiting out every request. Summary batches fit the device's max APDU when it cannot segment; an abort halves the batch.
+- Simulator test aids: `--objects n` (big controller, needs segmentation), `--outage after,seconds` (silent, then back with COV
+  subscriptions forgotten, like a restart; its port stays the same, unlike restarting `simulate`).
 - BBMD registration is confirmed via `transport.Bvlc.MessageReceived` (BVLC-Result); the client method alone gives no feedback. Registrations must be renewed (done at TTL/2).
 - `BacnetClient.WritePropertyAsync` takes `byte?` priority.
 - ClosedXML's `SaveAs(path)` rejects non-.xlsx extensions; save to a stream (the exporter writes a temp file first).
