@@ -50,6 +50,20 @@ public sealed class ObjectSummary
         return changed;
     }
 
+    /// <summary>
+    /// Take every field from a fresh read of the same object, in place. Other views (the Find index, a live watch) hold
+    /// this same instance, so updating it keeps them all current; swapping in the new object would leave them stale.
+    /// </summary>
+    public void UpdateFrom(ObjectSummary fresh)
+    {
+        Name = fresh.Name ?? Name;
+        Description = fresh.Description ?? Description;
+        PresentValue = fresh.PresentValue ?? PresentValue;
+        Units = fresh.Units ?? Units;
+        UnitsCode = fresh.UnitsCode ?? UnitsCode;
+        PrioritySlots = fresh.PrioritySlots;
+    }
+
     private static bool SameSlots(IReadOnlyList<PrioritySlot> a, IReadOnlyList<PrioritySlot> b) =>
         a.Count == b.Count && a.Zip(b).All(p => p.First.Priority == p.Second.Priority && p.First.ValueText == p.Second.ValueText);
 

@@ -926,7 +926,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         try
         {
             var fresh = (await _svc.OpenDevice(deviceRow.Device).ReadSummariesAsync([obj.Id]))[0];
-            row.Refresh(fresh);
+            obj.UpdateFrom(fresh); // in place: Find and Live hold this same object
+            row.Refresh(obj);
             UpdateOverrideSummary();
             await LoadPropertiesAsync(row);
         }

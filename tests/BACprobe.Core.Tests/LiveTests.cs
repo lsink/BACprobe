@@ -48,6 +48,17 @@ public class LiveTests
     }
 
     [Fact]
+    public void A_fresh_read_updates_the_same_instance_and_keeps_what_it_lacks()
+    {
+        var s = new ObjectSummary { Id = Ao1, Name = "Damper", Description = "Supply damper", PresentValue = "50", Units = "%" };
+        s.UpdateFrom(new ObjectSummary { Id = Ao1, PresentValue = "25", PrioritySlots = [new PrioritySlot(8, "25")] });
+        Assert.Equal("25", s.PresentValue);
+        Assert.True(s.IsOverridden);
+        Assert.Equal("Damper", s.Name);   // the fresh read did not have it: kept
+        Assert.Equal("%", s.Units);
+    }
+
+    [Fact]
     public void Missing_data_leaves_the_old_value_alone()
     {
         // A read that failed for one property must not blank what we already know.
