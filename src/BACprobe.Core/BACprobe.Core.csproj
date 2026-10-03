@@ -8,5 +8,6 @@
     <PackageReference Include="BACnet" />
     <PackageReference Include="ClosedXML" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="System.IO.Ports" />
   </ItemGroup>
 </Project>

@@ -63,6 +63,7 @@ public partial class MainWindow : Window
             vm.ShowTrend = trend => new TrendWindow(trend) { Owner = this }.Show();
             vm.ShowLiveTrend = trend => new LiveTrendWindow(trend) { Owner = this }.Show();
             vm.ShowBbmdCheck = check => new BbmdCheckWindow(check) { Owner = this }.Show();
+            vm.ShowMstp = mstp => new MstpWindow(mstp) { Owner = this }.Show();
             vm.PickTrendFile = suggested =>
                 TrendWindow.PickFile(OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
             // Trend windows (log and live) read through the connection that opened them: close them when it is replaced.

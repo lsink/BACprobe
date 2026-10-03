@@ -501,6 +501,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: opens the BBMD check.</summary>
     public Action<BbmdCheckViewModel> ShowBbmdCheck { get; set; } = _ => { };
 
+    /// <summary>Set by the window: opens the MS/TP monitor.</summary>
+    public Action<MstpViewModel> ShowMstp { get; set; } = _ => { };
+
+    /// <summary>Listen to an MS/TP trunk through a USB-RS485 adapter (receive-only). Needs no scan and no IP network.</summary>
+    [RelayCommand]
+    private void OpenMstp() => ShowMstp(new MstpViewModel());
+
     private bool CanCheckBbmd() => SelectedAdapter is not null && BbmdText.Trim().Length > 0;
 
     /// <summary>Read the BBMD's tables and its peers' and say what looks wrong. Needs no scan first; changes nothing.</summary>
