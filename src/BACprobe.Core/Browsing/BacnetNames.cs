@@ -53,8 +53,11 @@ public static class BacnetNames
         return Enum.IsDefined(type) ? Prettify(type.ToString(), "OBJECT_") : $"Unknown type {(int)type}";
     }
 
+    private static readonly Dictionary<BacnetObjectTypes, string> ShortNames =
+        ObjectAliases.GroupBy(kv => kv.Value).ToDictionary(g => g.Key, g => g.First().Key.ToUpperInvariant());
+
     public static string ObjectTypeShort(BacnetObjectTypes type) =>
-        ObjectAliases.FirstOrDefault(kv => kv.Value == type).Key?.ToUpperInvariant() ?? ObjectTypeName(type);
+        ShortNames.TryGetValue(type, out var s) ? s : ObjectTypeName(type);
 
     /// <summary>"Analog Input 3", or "AI3" style short form via <see cref="ObjectTypeShort"/>.</summary>
     public static string ObjectLabel(BacnetObjectId id) => $"{ObjectTypeName(id.type)} {id.instance}";

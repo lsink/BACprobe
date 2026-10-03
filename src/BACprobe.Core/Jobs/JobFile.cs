@@ -140,13 +140,25 @@ public static class JobFile
             ("$mn", d.ModelName), ("$fw", d.Firmware), ("$mx", (long)d.MaxApdu), ("$seg", (int)d.Segmentation),
             ("$pr", d.PointsRead ? 1 : 0));
 
+        if (d.Objects.Count == 0) return;
+
+        // One prepared statement for every object: a big site has tens of thousands of rows.
+        using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO objects(device_instance, object_type, object_instance, name, description, present_value, units, units_code, priority_slots)
+            VALUES ($d, $t, $i, $n, $de, $pv, $u, $uc, $ps)
+            """;
+        string[] names = ["$d", "$t", "$i", "$n", "$de", "$pv", "$u", "$uc", "$ps"];
+        var p = names.Select(n => cmd.Parameters.Add(new SqliteParameter { ParameterName = n })).ToArray(); // type follows each value
+        cmd.Prepare();
         foreach (var o in d.Objects)
-            Exec(c, tx, """
-                INSERT INTO objects(device_instance, object_type, object_instance, name, description, present_value, units, units_code, priority_slots)
-                VALUES ($d, $t, $i, $n, $de, $pv, $u, $uc, $ps)
-                """,
-                ("$d", (long)d.Instance), ("$t", (int)o.Type), ("$i", (long)o.Instance), ("$n", o.Name),
-                ("$de", o.Description), ("$pv", o.PresentValue), ("$u", o.Units), ("$uc", o.UnitsCode is { } uc ? (long)uc : null), ("$ps", SlotsToJson(o.Slots)));
+        {
+            object?[] values = [(long)d.Instance, (int)o.Type, (long)o.Instance, o.Name, o.Description, o.PresentValue, o.Units,
+                o.UnitsCode is { } uc ? (long)uc : null, SlotsToJson(o.Slots)];
+            for (var i = 0; i < p.Length; i++) p[i].Value = values[i] ?? DBNull.Value; // always parameters: names come off the network
+            cmd.ExecuteNonQuery();
+        }
     }
 
     private static void WriteLogRow(SqliteConnection c, SqliteTransaction tx, WriteLogEntry e) =>

@@ -42,12 +42,21 @@ public static partial class UdpPortInspector
         var owners = new List<PortOwner>();
         if (!OperatingSystem.IsWindows()) return owners;
 
+        const uint ErrorInsufficientBuffer = 122;
         var size = 0;
         _ = GetExtendedUdpTable(IntPtr.Zero, ref size, false, AfInet, UdpTableOwnerPid, 0);
         var buffer = Marshal.AllocHGlobal(size);
         try
         {
-            if (GetExtendedUdpTable(buffer, ref size, false, AfInet, UdpTableOwnerPid, 0) != 0) return owners;
+            // The table can grow between asking its size and reading it (another program opened a socket): retry with the new size.
+            uint result;
+            var tries = 0;
+            while ((result = GetExtendedUdpTable(buffer, ref size, false, AfInet, UdpTableOwnerPid, 0)) == ErrorInsufficientBuffer && ++tries < 5)
+            {
+                Marshal.FreeHGlobal(buffer);
+                buffer = Marshal.AllocHGlobal(size);
+            }
+            if (result != 0) return owners;
             var count = Marshal.ReadInt32(buffer);
             var row = buffer + 4;
             for (var i = 0; i < count; i++, row += 12)
