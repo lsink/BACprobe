@@ -47,6 +47,23 @@ public partial class MainWindow : Window
                     return false;
                 }
             };
+            vm.ConfirmAck = request =>
+            {
+                try
+                {
+                    // Over the alarm list when that is where the tech pressed Acknowledge. A life-safety alarm starts with Cancel focused.
+                    var owner = OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this;
+                    return PromptWindow.Show(owner, Prompts.ForAck(request),
+                        [new PromptButton(request.ConfirmLabel), new PromptButton("Cancel", IsCancel: true)],
+                        focusIndex: request.Warning is null ? 0 : 1) == 0;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "BACprobe could not show the confirmation, so nothing was sent." + Environment.NewLine + Environment.NewLine + ex.Message,
+                        "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return false;
+                }
+            };
             vm.ShowExplanation = content => PromptWindow.Show(this, content, [new PromptButton("OK", IsCancel: true)]);
             vm.AskOverrides = overrides => PromptWindow.Show(this, Prompts.OverridesInPlace(overrides),
                 overrides.Count == 1
@@ -65,13 +82,14 @@ public partial class MainWindow : Window
             vm.ShowBbmdCheck = check => new BbmdCheckWindow(check) { Owner = this }.Show();
             vm.ShowWatch = watch => new WatchWindow(watch) { Owner = this }.Show();
             vm.ShowCompare = compare => new CompareWindow(compare) { Owner = this }.Show();
+            vm.ShowAlarms = alarms => new AlarmsWindow(alarms) { Owner = this }.Show();
             vm.ShowMstp = mstp => new MstpWindow(mstp) { Owner = this }.Show();
             vm.PickTrendFile = suggested =>
                 TrendWindow.PickFile(OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
-            // Trend windows (log and live) read through the connection that opened them: close them when it is replaced.
+            // Trend and alarm windows read through the connection that opened them: close them when it is replaced.
             vm.ConnectionReset += () =>
             {
-                foreach (var w in OwnedWindows.OfType<Window>().Where(w => w is TrendWindow or LiveTrendWindow).ToList()) w.Close();
+                foreach (var w in OwnedWindows.OfType<Window>().Where(w => w is TrendWindow or LiveTrendWindow or AlarmsWindow).ToList()) w.Close();
             };
             vm.PickExportFile = suggested =>
             {

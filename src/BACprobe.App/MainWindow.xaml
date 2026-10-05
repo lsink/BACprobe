@@ -128,6 +128,9 @@
         <Button Content="{Binding WatchButtonText}" Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenWatchCommand}"
                 AutomationProperties.Name="Watch list"
                 ToolTip="The points you are keeping an eye on across devices, kept up to date live. Add one with the Watch button next to its properties. Saved with the job." />
+        <Button Content="Alarms..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenAlarmsCommand}"
+                AutomationProperties.Name="Alarms"
+                ToolTip="Every device's active and unacknowledged alarms, worst first, each with a likely cause and next step. Acknowledge one from there (asks first; logged like a write)." />
         <Button Content="Compare..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenCompareCommand}"
                 AutomationProperties.Name="Compare devices"
                 ToolTip="Line two devices up point by point to find what is set differently: a setpoint someone changed, a point missing on one. Reads only." />

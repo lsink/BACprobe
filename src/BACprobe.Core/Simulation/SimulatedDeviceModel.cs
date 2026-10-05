@@ -25,6 +25,136 @@ public sealed class SimulatedDeviceModel
         public bool InAlarm { get; set; }
         /// <summary>The value is pinned (a failed sensor reads the same rail value): the drift leaves it alone.</summary>
         public bool Stuck { get; set; }
+        /// <summary>Non-null for points that report their own alarms (intrinsic reporting).</summary>
+        public SimEvent? Event { get; set; }
+    }
+
+    /// <summary>A point's alarm state as a controller keeps it: current state, acknowledged flags and when each transition last happened.</summary>
+    private sealed class SimEvent
+    {
+        public BacnetEventStates State { get; set; } = BacnetEventStates.EVENT_STATE_NORMAL;
+        /// <summary>Indexed by transition: to off-normal, to fault, to normal.</summary>
+        public bool[] Acked { get; } = [true, true, true];
+        public BacnetGenericTime[] Stamps { get; } = [Alarms.EventText.Never, Alarms.EventText.Never, Alarms.EventText.Never];
+        public float? High { get; set; }
+        public float? Low { get; set; }
+        public float Deadband { get; set; }
+    }
+
+    /// <summary>
+    /// Make an analog point alarm on its own when it goes above <paramref name="high"/> or below <paramref name="low"/>, and clear
+    /// only once it is back inside by <paramref name="deadband"/>, like a controller's intrinsic alarm. Also reports faults.
+    /// </summary>
+    public void SetLimits(BacnetObjectId id, float high, float low, float deadband)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(id, out var o)) return;
+            o.Event ??= new SimEvent();
+            o.Event.High = high;
+            o.Event.Low = low;
+            o.Event.Deadband = deadband;
+            Set(o, BacnetPropertyIds.PROP_HIGH_LIMIT, Real(high));
+            Set(o, BacnetPropertyIds.PROP_LOW_LIMIT, Real(low));
+            Set(o, BacnetPropertyIds.PROP_DEADBAND, Real(deadband));
+            EvaluateEvent(o);
+        }
+    }
+
+    /// <summary>Make a point report alarms (faults always; off-normal while <see cref="SetProblem"/> says it is in alarm).</summary>
+    public void EnableEvents(BacnetObjectId id)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(id, out var o)) return;
+            o.Event ??= new SimEvent();
+            EvaluateEvent(o);
+        }
+    }
+
+    /// <summary>Record that a point went into <paramref name="state"/> at <paramref name="at"/> (device clock) and nobody has acknowledged it yet.</summary>
+    public void RecordTransition(BacnetObjectId id, BacnetEventStates state, DateTime at)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(id, out var o)) return;
+            o.Event ??= new SimEvent();
+            Transition(o.Event, state, at);
+        }
+    }
+
+    private static void Transition(SimEvent e, BacnetEventStates state, DateTime at)
+    {
+        var t = (int)Alarms.EventText.TransitionInto(state);
+        e.State = state;
+        e.Acked[t] = false;
+        // BACnet time stamps carry hundredths of a second: keep the stored one exactly what the client will echo back.
+        e.Stamps[t] = new BacnetGenericTime(new DateTime(at.Ticks - at.Ticks % (TimeSpan.TicksPerMillisecond * 10)), BacnetTimestampTags.TIME_STAMP_DATETIME);
+    }
+
+    /// <summary>Work out the point's alarm state now, and record a transition if it changed.</summary>
+    private void EvaluateEvent(SimObject o)
+    {
+        if (o.Event is not { } e) return;
+        var faulted = o.Props.TryGetValue(BacnetPropertyIds.PROP_RELIABILITY, out var rel) && rel is [{ Value: uint code }] && code != 0;
+        var next = BacnetEventStates.EVENT_STATE_NORMAL;
+        if (faulted) next = BacnetEventStates.EVENT_STATE_FAULT;
+        else if (e.High is { } high && e.Low is { } low && Raw(o, BacnetPropertyIds.PROP_PRESENT_VALUE) is [{ Value: float pv }])
+        {
+            if (pv > high || (e.State == BacnetEventStates.EVENT_STATE_HIGH_LIMIT && pv > high - e.Deadband))
+                next = BacnetEventStates.EVENT_STATE_HIGH_LIMIT;
+            else if (pv < low || (e.State == BacnetEventStates.EVENT_STATE_LOW_LIMIT && pv < low + e.Deadband))
+                next = BacnetEventStates.EVENT_STATE_LOW_LIMIT;
+        }
+        else if (o.InAlarm) next = BacnetEventStates.EVENT_STATE_OFFNORMAL;
+        if (next != e.State) Transition(e, next, DateTime.Now + ClockSkew);
+    }
+
+    /// <summary>The GetEventInformation list: every point in alarm or fault, or with a transition not yet acknowledged, in object order.</summary>
+    public IReadOnlyList<BacnetGetEventInformationData> ActiveEvents()
+    {
+        lock (_lock)
+            return _objects.Values
+                .Where(o => o.Event is { } e && (e.State != BacnetEventStates.EVENT_STATE_NORMAL || e.Acked.Any(a => !a)))
+                .OrderBy(o => (int)o.Id.type).ThenBy(o => o.Id.instance)
+                .Select(o => new BacnetGetEventInformationData
+                {
+                    objectIdentifier = o.Id,
+                    eventState = o.Event!.State,
+                    acknowledgedTransitions = AckedBits(o.Event),
+                    eventTimeStamps = [.. o.Event.Stamps],
+                    notifyType = BacnetNotifyTypes.NOTIFY_ALARM,
+                    eventEnable = BacnetBitString.ConvertFromInt(7, 3),
+                    eventPriorities = [100, 50, 200], // to alarm, to fault, to normal: typical front-end defaults
+                })
+                .ToList();
+    }
+
+    private static BacnetBitString AckedBits(SimEvent e) =>
+        BacnetBitString.ConvertFromInt((uint)((e.Acked[0] ? 1 : 0) | (e.Acked[1] ? 2 : 0) | (e.Acked[2] ? 4 : 0)), 3);
+
+    /// <summary>
+    /// AcknowledgeAlarm, checked the way a controller checks it: the point must report alarms, the state must fit the transition,
+    /// and the time stamp must be that transition's latest (an older one means the alarm has happened again since).
+    /// Returns null on success, otherwise the error to send.
+    /// </summary>
+    public SimError? Acknowledge(BacnetObjectId id, BacnetEventStates stateAcked, BacnetGenericTime stamp)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(id, out var o))
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_OBJECT, BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT);
+            if (o.Event is not { } e)
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_SERVICES, BacnetErrorCodes.ERROR_CODE_INVALID_EVENT_STATE);
+            var t = (int)Alarms.EventText.TransitionInto(stateAcked);
+            var mine = e.Stamps[t];
+            if (Alarms.EventText.IsNever(mine))
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_SERVICES, BacnetErrorCodes.ERROR_CODE_INVALID_EVENT_STATE);
+            if (stamp.Tag != mine.Tag || Math.Abs((stamp.Time - mine.Time).TotalMilliseconds) >= 10)
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_SERVICES, BacnetErrorCodes.ERROR_CODE_INVALID_TIME_STAMP);
+            e.Acked[t] = true;
+            return null;
+        }
     }
 
     /// <summary>
@@ -45,15 +175,28 @@ public sealed class SimulatedDeviceModel
                 Set(o, BacnetPropertyIds.PROP_PRESENT_VALUE, Real(v));
                 o.Stuck = true;
             }
+            EvaluateEvent(o);
         }
     }
 
-    /// <summary>The sample device's troubles for <c>simulate --faults</c>: a broken discharge-air sensor, a zone in alarm, and a point left out of service.</summary>
+    /// <summary>
+    /// The sample device's troubles for <c>simulate --faults</c>: a broken discharge-air sensor (a fault alarm), a zone above its
+    /// high alarm limit, a point left out of service, and a filter alarm from earlier that cleared but was never acknowledged.
+    /// </summary>
     public void AddSampleProblems()
     {
-        SetProblem(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 2), BacnetReliability.RELIABILITY_OPEN_LOOP, stuckAt: -40f);
-        SetProblem(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1), inAlarm: true);
+        var dat = new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 2);
+        var zone = new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1);
+        var filter = new BacnetObjectId(BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT, 1);
+        EnableEvents(dat);
+        SetProblem(dat, BacnetReliability.RELIABILITY_OPEN_LOOP, stuckAt: -40f);
+        // Zone Temp starts well above its high limit, so the drift does not wander it back out of alarm.
+        if (TryRead(zone, BacnetPropertyIds.PROP_PRESENT_VALUE, ArrayAll, out var pv, out _) && pv is [{ Value: float zoneTemp }])
+            SetLimits(zone, high: (float)Math.Round(zoneTemp - 6), low: 55f, deadband: 1f);
         SetProblem(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_VALUE, 1), outOfService: true);
+        var now = DateTime.Now + ClockSkew;
+        RecordTransition(filter, BacnetEventStates.EVENT_STATE_OFFNORMAL, now.AddHours(-2));
+        RecordTransition(filter, BacnetEventStates.EVENT_STATE_NORMAL, now.AddHours(-1).AddMinutes(-40));
     }
 
     /// <summary>Status_Flags as the point would report them: alarm as set, fault from Reliability, out of service from its property.</summary>
@@ -65,7 +208,7 @@ public sealed class SimulatedDeviceModel
     private static BacnetStatusFlags FlagsOf(SimObject o)
     {
         var flags = (BacnetStatusFlags)0;
-        if (o.InAlarm) flags |= BacnetStatusFlags.STATUS_FLAG_IN_ALARM;
+        if (o.InAlarm || (o.Event is { } e && Alarms.EventText.IsAlarmState(e.State))) flags |= BacnetStatusFlags.STATUS_FLAG_IN_ALARM;
         if (o.Props.TryGetValue(BacnetPropertyIds.PROP_RELIABILITY, out var rel) && rel is [{ Value: uint code }] && code != 0)
             flags |= BacnetStatusFlags.STATUS_FLAG_FAULT;
         if (o.Props.TryGetValue(BacnetPropertyIds.PROP_OUT_OF_SERVICE, out var oos) && oos is [{ Value: true }])
@@ -214,6 +357,7 @@ public sealed class SimulatedDeviceModel
                 if (o.Props.TryGetValue(BacnetPropertyIds.PROP_PRESENT_VALUE, out var pv) && pv is [{ Value: float f }])
                     pv[0] = Real((float)Math.Round(Math.Clamp(f + (rng.NextDouble() - 0.5) * 0.6, 40, 100), 1));
             }
+            foreach (var o in _objects.Values) EvaluateEvent(o);
             foreach (var (input, output) in _followers)
             {
                 if (!_objects.TryGetValue(input, out var i) || !_objects.TryGetValue(output, out var outObj)) continue;
@@ -394,7 +538,10 @@ public sealed class SimulatedDeviceModel
     {
         var list = o.Props.Keys.ToList();
         if (ReferenceEquals(o, _device)) list.Add(BacnetPropertyIds.PROP_OBJECT_LIST);
-        if (HasStatus(o)) list.Add(BacnetPropertyIds.PROP_STATUS_FLAGS);
+        if (HasStatus(o)) list.AddRange([BacnetPropertyIds.PROP_STATUS_FLAGS, BacnetPropertyIds.PROP_EVENT_STATE]);
+        if (o.Event is not null)
+            list.AddRange([BacnetPropertyIds.PROP_ACKED_TRANSITIONS, BacnetPropertyIds.PROP_EVENT_TIME_STAMPS, BacnetPropertyIds.PROP_NOTIFY_TYPE,
+                BacnetPropertyIds.PROP_EVENT_ENABLE]);
         return list;
     }
 
@@ -406,7 +553,8 @@ public sealed class SimulatedDeviceModel
             .Select(k => new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_OBJECT_ID, k)).ToList();
 
     private static bool IsArray(BacnetPropertyIds p) =>
-        p is BacnetPropertyIds.PROP_OBJECT_LIST or BacnetPropertyIds.PROP_PRIORITY_ARRAY or BacnetPropertyIds.PROP_STATE_TEXT;
+        p is BacnetPropertyIds.PROP_OBJECT_LIST or BacnetPropertyIds.PROP_PRIORITY_ARRAY or BacnetPropertyIds.PROP_STATE_TEXT
+            or BacnetPropertyIds.PROP_EVENT_TIME_STAMPS;
 
     /// <summary>How far this device's clock is from the PC's (positive = ahead), to exercise the clock check.</summary>
     public TimeSpan ClockSkew { get; set; }
@@ -422,6 +570,17 @@ public sealed class SimulatedDeviceModel
         }
         if (p == BacnetPropertyIds.PROP_STATUS_FLAGS && HasStatus(o))
             return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt((uint)FlagsOf(o), 4))];
+        if (p == BacnetPropertyIds.PROP_EVENT_STATE && HasStatus(o))
+            return [Enum((uint)(o.Event?.State ?? BacnetEventStates.EVENT_STATE_NORMAL))];
+        if (o.Event is { } ev)
+        {
+            if (p == BacnetPropertyIds.PROP_ACKED_TRANSITIONS) return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, AckedBits(ev))];
+            if (p == BacnetPropertyIds.PROP_EVENT_TIME_STAMPS)
+                return ev.Stamps.Select(s => new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_TIMESTAMP, s)).ToList();
+            if (p == BacnetPropertyIds.PROP_NOTIFY_TYPE) return [Enum((uint)BacnetNotifyTypes.NOTIFY_ALARM)];
+            if (p == BacnetPropertyIds.PROP_EVENT_ENABLE)
+                return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt(7, 3))];
+        }
         if (o.Trend is { } t)
         {
             if (p == BacnetPropertyIds.PROP_RECORD_COUNT) return [Uint((uint)t.Buffer.Count)];
@@ -545,6 +704,7 @@ public sealed class SimulatedDeviceModel
                     return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_VALUE_OUT_OF_RANGE);
             }
             o.Priority[p - 1] = relinquish ? null : value;
+            EvaluateEvent(o);
             summary = relinquish ? $"relinquished priority {p}" : $"wrote {value.Value} at priority {p}";
             return null;
         }

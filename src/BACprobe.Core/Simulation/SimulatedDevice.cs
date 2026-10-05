@@ -6,8 +6,8 @@ using BACprobe.Core.Networking;
 namespace BACprobe.Core.Simulation;
 
 /// <summary>
-/// A fake BACnet/IP device for testing without hardware. Answers Who-Is, ReadProperty, ReadPropertyMultiple
-/// WriteProperty and SubscribeCOV from a <see cref="SimulatedDeviceModel"/>.
+/// A fake BACnet/IP device for testing without hardware. Answers Who-Is, ReadProperty, ReadPropertyMultiple,
+/// WriteProperty, SubscribeCOV, ReadRange, GetEventInformation and AcknowledgeAlarm from a <see cref="SimulatedDeviceModel"/>.
 /// </summary>
 public sealed class SimulatedDevice : IDisposable
 {
@@ -18,6 +18,7 @@ public sealed class SimulatedDevice : IDisposable
     private Timer? _driftTimer;
     private Timer? _covTimer;
     private readonly bool _supportCov;
+    private readonly bool _supportEvents;
     private readonly int _covLimit;
     private readonly List<CovSub> _subs = [];
     private readonly Lock _subsLock = new();
@@ -59,12 +60,14 @@ public sealed class SimulatedDevice : IDisposable
     /// <param name="supportRpm">False mimics older devices that refuse ReadPropertyMultiple, to exercise the fallback.</param>
     /// <param name="supportCov">False mimics a device with no change-of-value support, to exercise the polling fallback.</param>
     /// <param name="covLimit">Maximum number of subscriptions the device will accept (0 = no limit), like a real controller running out of slots.</param>
+    /// <param name="supportEvents">False mimics a device with no GetEventInformation, to exercise the Status_Flags fallback.</param>
     public SimulatedDevice(AdapterInfo adapter, SimulatedDeviceModel model, bool supportRpm = true, int port = PreflightRules.BacnetPort,
-        bool drift = true, bool supportCov = true, int covLimit = 0)
+        bool drift = true, bool supportCov = true, int covLimit = 0, bool supportEvents = true)
     {
         Model = model;
         _drift = drift;
         _supportCov = supportCov;
+        _supportEvents = supportEvents;
         _covLimit = covLimit;
         _supportRpm = supportRpm;
         var transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
@@ -76,6 +79,51 @@ public sealed class SimulatedDevice : IDisposable
         _client.OnWritePropertyRequest += OnWriteProperty;
         _client.OnSubscribeCOV += OnSubscribeCov;
         _client.OnReadRange += OnReadRange;
+        _client.OnGetAlarmSummaryOrEventInformation += OnGetEventInformation;
+        _client.OnAlarmAcknowledge += OnAlarmAcknowledge;
+    }
+
+    /// <summary>Events per GetEventInformation answer: small, so the client has to follow the "more events" chain like it would on a busy controller.</summary>
+    private const int EventsPerAnswer = 2;
+
+    private void OnGetEventInformation(BacnetClient sender, BacnetAddress adr, byte invokeId, bool getEvent, BacnetObjectId lastReceived,
+        BacnetMaxAdpu maxApdu, BacnetMaxSegments maxSegments)
+    {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
+        if (!_supportEvents)
+        {
+            Log?.Invoke($"[{Model.Instance}] GetEventInformation from {adr} -> refused (no alarm list service)");
+            sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_GET_EVENT_INFORMATION, invokeId,
+                BacnetErrorClasses.ERROR_CLASS_SERVICES, BacnetErrorCodes.ERROR_CODE_SERVICE_REQUEST_DENIED);
+            return;
+        }
+
+        // "Last received" is absent on the first request (the library marks that with MAX_BACNET_OBJECT_TYPE); later ones continue after it.
+        var all = Model.ActiveEvents();
+        var start = lastReceived.type == BacnetObjectTypes.MAX_BACNET_OBJECT_TYPE
+            ? 0
+            : all.ToList().FindIndex(e => e.objectIdentifier.Equals(lastReceived)) + 1;
+        var page = all.Skip(start).Take(EventsPerAnswer).ToArray();
+        var more = start + page.Length < all.Count;
+        Log?.Invoke($"[{Model.Instance}] GetEventInformation from {adr} -> {page.Length} event(s){(more ? ", more to come" : "")}");
+        sender.GetAlarmSummaryOrEventInformationResponse(adr, getEvent, invokeId, sender.GetSegmentBuffer(maxSegments), page, more);
+    }
+
+    private void OnAlarmAcknowledge(BacnetClient sender, BacnetAddress adr, byte invokeId, uint ackProcessIdentifier,
+        BacnetObjectId eventObject, uint eventStateAcked, string ackSource, BacnetGenericTime eventTimeStamp, BacnetGenericTime ackTimeStamp)
+    {
+        if (Silent) return; // pretending to be off: say nothing, so the client times out
+        var err = Model.Acknowledge(eventObject, (BacnetEventStates)eventStateAcked, eventTimeStamp);
+        if (err is null)
+        {
+            Log?.Invoke($"[{Model.Instance}] AcknowledgeAlarm {eventObject} {(BacnetEventStates)eventStateAcked} by \"{ackSource}\" from {adr}");
+            sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_ACKNOWLEDGE_ALARM, invokeId);
+        }
+        else
+        {
+            Log?.Invoke($"[{Model.Instance}] AcknowledgeAlarm {eventObject} from {adr} -> {err.Value.Code}");
+            sender.ErrorResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_ACKNOWLEDGE_ALARM, invokeId, err.Value.Class, err.Value.Code);
+        }
     }
 
     public void Start()

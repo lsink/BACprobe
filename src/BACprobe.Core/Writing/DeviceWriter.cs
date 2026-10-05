@@ -123,6 +123,47 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         }
     }
 
+    /// <summary>
+    /// Acknowledge one alarm. It changes nothing on the point, but it does change what the site's operators see, so it is
+    /// refused in read-only mode and logged like a write. Callers must have shown the user the confirmation first.
+    /// </summary>
+    public async Task<WriteOutcome> AcknowledgeAsync(Alarms.AlarmAckRequest request, CancellationToken ct = default)
+    {
+        var e = request.Event;
+        var targets = request.Targets;
+        if (ReadOnly)
+        {
+            LogAck(request, "acknowledge alarm", false, "blocked: read-only mode");
+            return ReadOnlyOutcome;
+        }
+        if (targets.Count == 0) return new WriteOutcome(false, "That alarm is already acknowledged.");
+
+        // One request per waiting transition (into alarm, back to normal...): BACnet acknowledges them one at a time.
+        var done = 0;
+        foreach (var t in targets)
+        {
+            try
+            {
+                await client.AlarmAcknowledgementAsync(e.Device.Address, e.Point, t.StateAcked, request.AckSource, t.Stamp,
+                    new BacnetGenericTime(DateTime.Now, BacnetTimestampTags.TIME_STAMP_DATETIME), cancellationToken: ct);
+                LogAck(request, Alarms.AlarmAckRequest.LogAction(t), true, "acknowledged");
+                done++;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                var text = Alarms.AckErrors.Explain(ex);
+                LogAck(request, Alarms.AlarmAckRequest.LogAction(t), false, text.Summary);
+                var partly = done > 0 ? $"{done} of {targets.Count} acknowledged, then: " : "";
+                return new WriteOutcome(false, partly + text.Full);
+            }
+        }
+        return new WriteOutcome(true, "acknowledged");
+    }
+
+    private void LogAck(Alarms.AlarmAckRequest r, string action, bool success, string result) =>
+        log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Event.Device.InstanceId, r.DeviceName, r.ObjectLabel, action,
+            Priority: 0, success, result)); // an acknowledgement has no priority
+
     private void LogOutOfService(OutOfServiceRequest r, string action, bool success, string result) =>
         log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Device.InstanceId, r.DeviceName, r.ObjectLabel, action,
             TrackedOverride.OutOfServicePriority, success, result));

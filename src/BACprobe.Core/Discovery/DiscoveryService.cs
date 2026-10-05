@@ -67,6 +67,8 @@ public sealed class DiscoveryService : IDisposable
         new(_client, device, new Browsing.DeviceBrowser(_client, device), points, options);
 
     /// <summary>Writes through this service's connection; every attempt is logged and overrides are tracked.</summary>
+    public Alarms.AlarmReader CreateAlarmReader() => new(_client);
+
     public Writing.DeviceWriter CreateWriter(Writing.WriteLog log, Writing.OverrideTracker tracker) => new(_client, log, tracker);
 
     private void OnIam(BacnetClient sender, BacnetAddress adr, uint deviceId, uint maxApdu,

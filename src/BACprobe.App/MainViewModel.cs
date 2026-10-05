@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using BACprobe.Core.Alarms;
 using BACprobe.Core.Bbmd;
 using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
@@ -567,6 +568,36 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 return read.Objects;
             },
             getProps: _svc is null ? null : (row, id) => _svc.OpenDevice(row.Device).ReadAllPropertiesAsync(id)));
+    }
+
+    /// <summary>Set by the window: opens the alarm list.</summary>
+    public Action<AlarmsViewModel> ShowAlarms { get; set; } = _ => { };
+
+    /// <summary>Set by the window: confirm acknowledging an alarm.</summary>
+    public Func<AlarmAckRequest, bool> ConfirmAck { get; set; } = _ => false;
+
+    /// <summary>Every device's active and unacknowledged alarms, read live (a saved job does not hold alarms).</summary>
+    [RelayCommand]
+    private void OpenAlarms()
+    {
+        if (_svc is null || Devices.Count == 0)
+        {
+            Status = "Alarms are read live from the devices. Scan first (a saved job does not store alarms).";
+            return;
+        }
+        ShowAlarms(new AlarmsViewModel([.. Devices.Select(d => d.Device)], _svc.CreateAlarmReader(), AcknowledgeAlarmAsync, GoToPointAsync,
+            readOnly: () => ReadOnlyMode));
+    }
+
+    /// <summary>Acknowledge one alarm: refused in read-only mode, confirmed in plain English, sent and logged by the writer.</summary>
+    private async Task<WriteOutcome> AcknowledgeAlarmAsync(AlarmAckRequest request)
+    {
+        if (_writer is null)
+            return new WriteOutcome(false, "Not connected, so nothing was sent. Next step: Scan again, then Refresh the alarm list.");
+        if (ReadOnlyMode)
+            return new WriteOutcome(false, "Read-only mode is on, so nothing was sent. Next step: untick Read-only at the top of the main window to acknowledge alarms.");
+        if (!ConfirmAck(request)) return new WriteOutcome(false, "Cancelled. Nothing was sent.");
+        return await _writer.AcknowledgeAsync(request);
     }
 
     /// <summary>Set by the window: opens the MS/TP monitor.</summary>

@@ -55,4 +55,25 @@ public class ReadOnlyWriterTests
         Assert.Empty(tracker.Active);
         Assert.Contains("read-only", Assert.Single(log.Entries).Result);
     }
+
+    [Fact]
+    public async Task Acknowledging_an_alarm_is_refused_too()
+    {
+        var (writer, log, _, cleanup) = Make();
+        using var _ = cleanup;
+        var e = new Alarms.ActiveEvent
+        {
+            Device = Device(), Point = Ao1, State = BacnetEventStates.EVENT_STATE_HIGH_LIMIT, Acked = [false, true, true],
+            TimeStamps = [new BacnetGenericTime(new DateTime(2026, 10, 5, 14, 2, 11), BacnetTimestampTags.TIME_STAMP_DATETIME),
+                Alarms.EventText.Never, Alarms.EventText.Never],
+        };
+
+        var outcome = await writer.AcknowledgeAsync(new Alarms.AlarmAckRequest(e, "AHU-1", "BACprobe (test)"));
+
+        Assert.False(outcome.Success);
+        Assert.Contains("Next step", outcome.Message);
+        var entry = Assert.Single(log.Entries);
+        Assert.Contains("acknowledge", entry.Action);
+        Assert.Contains("read-only", entry.Result);
+    }
 }

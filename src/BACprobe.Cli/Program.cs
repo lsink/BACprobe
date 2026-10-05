@@ -15,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--skew <minutes>] [--differ] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--no-events] [--skew <minutes>] [--differ] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -29,6 +29,8 @@ internal static partial class Program
           bacprobe mstp-discover --port <COMn> [--baud 38400|auto] [--mac <0-127>] [--survey 15] [--wait 10] [--low <n> --high <n>] [--yes]
           (objects, read, write, release, watch, trend, compare, routers and export also accept --mstp <COMn> [--baud ..] [--mac ..] [--yes] to connect through an MS/TP trunk)
           bacprobe compare   --device <a> --with <b> [--object <type:n>] [--all] [--inputs]
+          bacprobe alarms    [--device <instance>] [--wait <seconds>]
+          bacprobe alarms    --device <instance> --ack <type:n> [--yes]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
@@ -53,6 +55,10 @@ internal static partial class Program
         compare    Line two devices up point by point and print what differs (a setpoint someone changed, a point missing on one, a point
                    named differently). Live inputs differ by nature and are left out unless --inputs. --object av:1 compares that one object's
                    properties on both. --all also lists what is the same. Exit code 5 means differences were found. Reads only.
+        alarms     List every device's active and unacknowledged alarms (GetEventInformation; for a device without it, the points
+                   whose status says in alarm or fault), worst first, each with when it started, what is not acknowledged, and a
+                   likely cause and next step. Exit code 5 means alarms were found. --ack acknowledges one point's alarm after you
+                   confirm; it changes nothing on the point, and is logged like a write.
         mstp-discover  JOIN an MS/TP trunk as a master (this TRANSMITS) and list the devices on it. It listens first and refuses if the trunk is
                    too noisy or too quiet, the adapter's latency timer is over 2 ms, or the MAC is taken; it picks the lowest free master address
                    (or use --mac), uses Max_Master 127, and asks you to type JOIN (or --yes). Built on the library's own MS/TP master; only tested
@@ -83,7 +89,9 @@ internal static partial class Program
                    --dup adds an impostor with the first device's number; --unassigned adds a device with the reserved number 4194303.
                    --objects n adds n spare points to each device, so its object list needs segmented replies (a big controller).
                    --outage 20,25 makes the first device go silent after 20 s for 25 s and forget its COV subscriptions (a restart).
-                   --faults gives the first device problems to find: AI 2 open loop (reads -40), AI 1 in alarm, BV 1 out of service.
+                   --faults gives the first device problems to find: AI 2 open loop (reads -40, a fault alarm), AI 1 above its high
+                   alarm limit, BV 1 out of service, and MSI 1 with an earlier alarm that cleared but was never acknowledged.
+                   --no-events makes the first device refuse GetEventInformation, so 'alarms' falls back to the points' status.
                    --differ makes the second device differ from the first (Zone Setpoint 68, an extra point), to try 'bacprobe compare'.
                    --skew 47 sets the first device's clock 47 minutes ahead of this PC, for the device clock check.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
@@ -119,6 +127,7 @@ internal static partial class Program
                 "routers" => await RoutersAsync(opts),
                 "bbmd" => await BbmdCheckAsync(opts),
                 "compare" => await CompareAsync(opts),
+                "alarms" => await AlarmsAsync(opts),
                 "mstp-monitor" => await MstpMonitorAsync(opts),
                 "mstp-discover" => await MstpDiscoverAsync(opts),
                 "export" => await ExportAsync(opts),
@@ -284,13 +293,15 @@ internal static partial class Program
                 for (var k = 1; k <= padding; k++) // a big controller: its object list no longer fits in one packet
                     model.AddAnalogValue((uint)(1000 + k), $"Spare Value {k}", "Padding point", 0, BacnetUnitsId.UNITS_NO_UNITS, commandable: false);
                 var sim = new SimulatedDevice(adapter, model, supportRpm: !legacy, drift: !opts.ContainsKey("still"),
-                    supportCov: !(opts.ContainsKey("no-cov") && i == count - 1), covLimit: IntOpt(opts, "cov-limit", 0))
+                    supportCov: !(opts.ContainsKey("no-cov") && i == count - 1), covLimit: IntOpt(opts, "cov-limit", 0),
+                    supportEvents: !(opts.ContainsKey("no-events") && i == 0))
                 {
                     Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),
                 };
                 sim.Start();
                 sims.Add(sim);
-                Console.WriteLine($"Simulating device {first + i}{(legacy ? " (refuses ReadPropertyMultiple)" : "")} on {adapter.Address}");
+                Console.WriteLine($"Simulating device {first + i}{(legacy ? " (refuses ReadPropertyMultiple)" : "")}" +
+                                  $"{(opts.ContainsKey("no-events") && i == 0 ? " (refuses GetEventInformation)" : "")} on {adapter.Address}");
             }
 
             if (opts.TryGetValue("router", out var routerSpec))
