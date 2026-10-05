@@ -22,7 +22,15 @@ public sealed class MstpPortCapture : IDisposable
     /// <summary>Raised on the reader thread if the adapter stops answering (unplugged). The text includes cause and next step.</summary>
     public event Action<string>? Failed;
 
-    public static string[] PortNames() => [.. SerialPort.GetPortNames().Order()];
+    /// <summary>The COM ports Windows lists. Empty (not a crash) if the serial library cannot be loaded or the list cannot be read.</summary>
+    public static string[] PortNames()
+    {
+        try { return [.. SerialPort.GetPortNames().Order()]; }
+        catch (Exception ex) when (ex is IOException or FileNotFoundException or PlatformNotSupportedException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
 
     /// <summary>Open the port and start reading. Throws the open error (in <see cref="OpenErrorText"/> wording) for the caller to show.</summary>
     public void Start()
