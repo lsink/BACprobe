@@ -52,6 +52,8 @@ public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
     public string Model => d.ModelName ?? "-";
     public string Firmware => d.FirmwareRevision ?? "-";
     public string Name => d.ObjectName ?? "-";
+    /// <summary>"1001 - AHU-1", for pickers.</summary>
+    public string Label => $"{d.InstanceId} - {d.ObjectName ?? "unnamed"}";
     public string Response => d.ResponseTime is { } r ? $"{r.TotalMilliseconds:0} ms" : "-";
     public string Segmentation => d.Segmentation switch
     {
@@ -500,6 +502,34 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Set by the window: opens the BBMD check.</summary>
     public Action<BbmdCheckViewModel> ShowBbmdCheck { get; set; } = _ => { };
+
+    /// <summary>Set by the window: opens the device comparison.</summary>
+    public Action<CompareViewModel> ShowCompare { get; set; } = _ => { };
+
+    /// <summary>Line two devices up point by point to find what is set differently. Reads only.</summary>
+    [RelayCommand]
+    private void OpenCompare()
+    {
+        if (Devices.Count < 2)
+        {
+            Status = "Comparing needs two devices. Scan first (or open a saved job with two or more devices).";
+            return;
+        }
+        ShowCompare(new CompareViewModel(Devices.ToList(), SelectedDevice,
+            getPoints: async (row, progress) =>
+            {
+                if (_svc is null)
+                {
+                    // Offline (a saved job): use what was saved.
+                    if (_pointCache.TryGetValue(row.Instance, out var saved)) return saved.Objects;
+                    throw new InvalidOperationException($"{row.Label}'s points were not read when the job was saved.");
+                }
+                var read = await PointExporter.CollectAsync(_svc.OpenDevice(row.Device), row.Device, progress);
+                _pointCache[row.Instance] = read;
+                return read.Objects;
+            },
+            getProps: _svc is null ? null : (row, id) => _svc.OpenDevice(row.Device).ReadAllPropertiesAsync(id)));
+    }
 
     /// <summary>Set by the window: opens the MS/TP monitor.</summary>
     public Action<MstpViewModel> ShowMstp { get; set; } = _ => { };

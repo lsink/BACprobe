@@ -15,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--skew <minutes>] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--skew <minutes>] [--differ] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -26,6 +26,7 @@ internal static partial class Program
           bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]
           bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400|auto] [--seconds 30] [--frames] [--record <capture.bin>] [--pcap <frames.pcap> [--force]]
           bacprobe mstp-monitor --make-sample <capture.bin> [--force]
+          bacprobe compare   --device <a> --with <b> [--object <type:n>] [--all] [--inputs]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
@@ -47,6 +48,9 @@ internal static partial class Program
                    trunk is, the token loop time, damaged frames, nodes that do not take the token, and Max Master set too low, each with
                    a likely cause and next step. --frames prints every frame in plain English; --record saves the raw bytes and --replay
                    analyses a saved capture later (no adapter needed). --pcap writes the good frames as a Wireshark file. Common baud rates here: 38400 and 76800.
+        compare    Line two devices up point by point and print what differs (a setpoint someone changed, a point missing on one, a point
+                   named differently). Live inputs differ by nature and are left out unless --inputs. --object av:1 compares that one object's
+                   properties on both. --all also lists what is the same. Exit code 5 means differences were found. Reads only.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
                    (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.
@@ -74,6 +78,7 @@ internal static partial class Program
                    --objects n adds n spare points to each device, so its object list needs segmented replies (a big controller).
                    --outage 20,25 makes the first device go silent after 20 s for 25 s and forget its COV subscriptions (a restart).
                    --faults gives the first device problems to find: AI 2 open loop (reads -40), AI 1 in alarm, BV 1 out of service.
+                   --differ makes the second device differ from the first (Zone Setpoint 68, an extra point), to try 'bacprobe compare'.
                    --skew 47 sets the first device's clock 47 minutes ahead of this PC, for the device clock check.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations. --bbmd-peer adds a second
@@ -107,6 +112,7 @@ internal static partial class Program
                 "find" => await FindAsync(opts),
                 "routers" => await RoutersAsync(opts),
                 "bbmd" => await BbmdCheckAsync(opts),
+                "compare" => await CompareAsync(opts),
                 "mstp-monitor" => await MstpMonitorAsync(opts),
                 "export" => await ExportAsync(opts),
                 "job" => await JobAsync(opts),
@@ -262,6 +268,12 @@ internal static partial class Program
                 var model = SimulatedDeviceModel.CreateSample((uint)(first + i), null, stuck: opts.ContainsKey("stuck"), protectedSetpoint: opts.ContainsKey("protected"));
                 if (i == 0 && opts.ContainsKey("faults")) model.AddSampleProblems();
                 if (i == 0 && opts.ContainsKey("skew")) model.ClockSkew = TimeSpan.FromMinutes(IntOpt(opts, "skew", 0));
+                if (i == 1 && opts.ContainsKey("differ")) // for 'bacprobe compare': the second device was set up differently
+                {
+                    model.Write(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1), BacnetPropertyIds.PROP_PRESENT_VALUE,
+                        new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_REAL, 68f), 16, out _);
+                    model.AddAnalogValue(900, "Night Setback", "Unoccupied setback offset", 4, BacnetUnitsId.UNITS_DEGREES_FAHRENHEIT, commandable: false);
+                }
                 for (var k = 1; k <= padding; k++) // a big controller: its object list no longer fits in one packet
                     model.AddAnalogValue((uint)(1000 + k), $"Spare Value {k}", "Padding point", 0, BacnetUnitsId.UNITS_NO_UNITS, commandable: false);
                 var sim = new SimulatedDevice(adapter, model, supportRpm: !legacy, drift: !opts.ContainsKey("still"),
