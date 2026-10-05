@@ -24,6 +24,9 @@
         </StackPanel>
         <TextBlock Text="{Binding Detail}" Margin="22,2,0,0" TextWrapping="Wrap" />
         <TextBlock Text="{Binding Help}" Margin="22,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
+        <Button Content="{Binding LessonText}" Margin="22,4,0,0" Padding="8,2" HorizontalAlignment="Left"
+                Click="OnLearnMore" Visibility="{Binding LessonVisibility}"
+                ToolTip="A short plain-English lesson on what this means." />
       </StackPanel>
     </DataTemplate>
   </Application.Resources>

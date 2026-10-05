@@ -1,5 +1,6 @@
 using BACprobe.Core.Bbmd;
 using BACprobe.Core.Discovery;
+using BACprobe.Core.Learning;
 
 namespace BACprobe.Cli;
 
@@ -47,6 +48,7 @@ internal static partial class Program
             {
                 Console.WriteLine($"         Likely cause: {f.LikelyCause}");
                 Console.WriteLine($"         Next step:    {f.NextStep}");
+                if (Lessons.ForFinding(f) is { } lesson) Console.WriteLine($"         Lesson:       bacprobe lesson {lesson.Id}");
             }
         }
         return report.Findings.Any(f => f.Severity == FindingSeverity.Problem) ? 3 : 0;

@@ -1,4 +1,5 @@
 using BACprobe.Core.Discovery;
+using BACprobe.Core.Learning;
 
 namespace BACprobe.Cli;
 
@@ -17,6 +18,7 @@ internal static partial class Program
             if (f.Detail.Length > 0) Console.WriteLine($"            {f.Detail}");
             if (f.LikelyCause.Length > 0) Console.WriteLine($"            Likely cause: {f.LikelyCause}");
             if (f.NextStep.Length > 0) Console.WriteLine($"            Next step:    {f.NextStep}");
+            if (Lessons.ForFinding(f) is { } lesson) Console.WriteLine($"            Lesson:       bacprobe lesson {lesson.Id}");
         }
     }
 }
