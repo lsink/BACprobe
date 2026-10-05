@@ -44,7 +44,7 @@ public sealed class MstpNodeStats(byte mac)
 /// </summary>
 public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
 {
-    private readonly Dictionary<byte, MstpNodeStats> _nodes = [];
+    private readonly SortedDictionary<byte, MstpNodeStats> _nodes = []; // sorted by MAC, so reading the table never sorts
     private (byte From, byte To, long At)? _pendingPass;
     private byte? _turnOf; // whose turn the last frame handed out (token or poll), until something else is heard
     private long _first = -1, _last = -1, _wireBytes;
@@ -60,7 +60,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
     /// False for a replayed raw capture: it has no real clock, so bus load and token loop time would be made up
     /// and are left out of the findings.
     /// </summary>
-    public bool TimingKnown { get; set; } = true;
+    public bool TimingKnown { get; init; } = true;
     public int Frames { get; private set; }
     public int HeaderCrcErrors { get; private set; }
     public int DataCrcErrors { get; private set; }
@@ -71,7 +71,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
     public int HighestPolled { get; private set; } = -1;
 
     public int Errors => HeaderCrcErrors + DataCrcErrors + BadLengths;
-    public IReadOnlyList<MstpNodeStats> Nodes => [.. _nodes.Values.OrderBy(n => n.Mac)];
+    public IReadOnlyList<MstpNodeStats> Nodes => [.. _nodes.Values];
     public IReadOnlyList<MstpNodeStats> Masters => [.. Nodes.Where(n => n.IsMaster)];
 
     public double ElapsedSeconds => _first < 0 ? 0 : (double)(_last - _first) / ticksPerSecond;
@@ -212,7 +212,8 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
                 "Electrical noise, missing or doubled termination, a bad ground or shield, a long stub, or two devices transmitting at once.",
                 "Terminate only the two ends of the trunk, check the shield is grounded at one point, and look for the node whose traffic is damaged."));
 
-        foreach (var n in Nodes.Where(n => n.TokensReceived >= 3 || n.TokenNotTaken > 0))
+        var nodes = Nodes; // once: it copies the table
+        foreach (var n in nodes.Where(n => n.TokensReceived >= 3 || n.TokenNotTaken > 0))
         {
             var passes = n.TokenTaken + n.TokenNotTaken;
             if (n.TokenNotTaken == 0 || passes == 0) continue;
@@ -229,7 +230,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
         }
 
         // Damage that keeps landing on one node's turn points at that node, not at the trunk in general.
-        foreach (var n in Nodes.Where(n => n.TurnErrors >= 3))
+        foreach (var n in nodes.Where(n => n.TurnErrors >= 3))
         {
             var turns = Math.Max(1, n.TokensReceived + (n.PollReplies > 0 ? n.PollReplies : 0));
             var share = (double)n.TurnErrors / turns;
@@ -244,7 +245,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
         }
 
         if (TimingKnown)
-            foreach (var n in Nodes.Where(n => n.PickupSamples >= 5))
+            foreach (var n in nodes.Where(n => n.PickupSamples >= 5))
             {
                 var avgMs = (double)n.PickupTicksTotal / n.PickupSamples / ticksPerSecond * 1000;
                 if (avgMs < SlowPickupMs) continue;
@@ -255,7 +256,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
                     $"If this is the monitoring PC's adapter, check its latency timer. Otherwise look at how loaded MAC {n.Mac} is and whether it can run at this baud rate."));
             }
 
-        var masters = Masters;
+        var masters = nodes.Where(n => n.IsMaster).ToList();
         if (HighestPolled >= 0)
         {
             var tooHigh = masters.Where(m => m.Mac > HighestPolled).Select(m => m.Mac).ToList();

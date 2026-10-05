@@ -47,7 +47,8 @@ internal static partial class Program
         {
             if (single is { } one)
             {
-                var rows = Comparison.CompareProperties(await svc.OpenDevice(devA).ReadAllPropertiesAsync(one), await svc.OpenDevice(devB).ReadAllPropertiesAsync(one));
+                var props = await Task.WhenAll(svc.OpenDevice(devA).ReadAllPropertiesAsync(one), svc.OpenDevice(devB).ReadAllPropertiesAsync(one));
+                var rows = Comparison.CompareProperties(props[0], props[1]);
                 var shown = rows.Where(r => opts.ContainsKey("all") || r.Kind != CompareKind.Same).ToList();
                 Console.WriteLine($"{BacnetNames.ObjectLabel(one)}: {rows.Count(r => r.Kind != CompareKind.Same)} of {rows.Count} properties differ.");
                 foreach (var r in shown) Console.WriteLine($"  {r.Property,-26} A: {r.ValueA ?? "-",-24} B: {r.ValueB ?? "-",-24} {r.KindText}");
@@ -55,15 +56,13 @@ internal static partial class Program
             }
 
             Console.WriteLine("Reading both devices' points...");
-            var pa = await PointExporter.CollectAsync(svc.OpenDevice(devA), devA, null);
-            var pb = await PointExporter.CollectAsync(svc.OpenDevice(devB), devB, null);
-            var points = Comparison.ComparePoints(pa.Objects, pb.Objects);
+            var read = await Task.WhenAll(PointExporter.CollectAsync(svc.OpenDevice(devA), devA, null), PointExporter.CollectAsync(svc.OpenDevice(devB), devB, null));
+            var points = Comparison.ComparePoints(read[0].Objects, read[1].Objects);
             var ignoreInputs = !opts.ContainsKey("inputs");
 
             Console.WriteLine();
             Console.WriteLine(Comparison.Summarise(points, ignoreInputs));
-            var list = points.Where(r => opts.ContainsKey("all") || r.Kind != CompareKind.Same || r.NamesDiffer)
-                .Where(r => !(ignoreInputs && r.IsLiveInput && r.Kind == CompareKind.Different)).ToList();
+            var list = Comparison.Visible(points, ignoreInputs, differencesOnly: !opts.ContainsKey("all"));
             if (list.Count > 0)
             {
                 Console.WriteLine();
@@ -71,9 +70,9 @@ internal static partial class Program
                 foreach (var r in list)
                     Console.WriteLine($"{r.Object,-8} {Truncate(r.Name, 26),-26} {r.ValueA ?? "-",-18} {r.ValueB ?? "-",-18} {r.KindText}{(r.NamesDiffer ? $"  (named \"{r.NameB}\" on B)" : "")}");
             }
-            if (ignoreInputs && points.Any(r => r.IsLiveInput && r.Kind == CompareKind.Different))
+            if (ignoreInputs && points.Any(r => r.IsLiveInputDifference))
                 Console.WriteLine("\nLive inputs (temperatures and so on) differ by nature and are left out; add --inputs to show them.");
-            return points.Any(r => r.Kind != CompareKind.Same && !(ignoreInputs && r.IsLiveInput && r.Kind == CompareKind.Different)) ? 5 : 0;
+            return Comparison.HasDifferences(points, ignoreInputs) ? 5 : 0;
         }
         catch (Exception ex)
         {

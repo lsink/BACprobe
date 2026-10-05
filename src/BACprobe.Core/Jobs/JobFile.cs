@@ -60,7 +60,7 @@ public static class JobFile
                 WriteMeta(conn, tx, job.Info);
                 foreach (var d in job.Devices) WriteDevice(conn, tx, d);
                 foreach (var e in job.WriteLog) WriteLogRow(conn, tx, e);
-                foreach (var n in job.Notes ?? []) WriteNote(conn, tx, n);
+                foreach (var n in job.AllNotes) WriteNote(conn, tx, n);
                 var position = 0;
                 foreach (var w in job.AllWatch) WriteWatch(conn, tx, w, position++);
                 tx.Commit();
@@ -198,10 +198,10 @@ public static class JobFile
         return list;
     }
 
-    // A device note is stored under object type -1, which no real object has.
+    // A device note is stored under SessionNotes.DeviceNoteType, which no real object type has.
     private static void WriteNote(SqliteConnection c, SqliteTransaction tx, NoteEntry n) =>
         Exec(c, tx, "INSERT OR REPLACE INTO notes(device_instance, object_type, object_instance, text) VALUES ($d, $t, $i, $x)",
-            ("$d", (long)n.Device), ("$t", n.Point is { } p ? (int)p.type : -1), ("$i", n.Point is { } q ? (long)q.instance : 0L), ("$x", n.Text));
+            ("$d", (long)n.Device), ("$t", n.Point is { } p ? (int)p.type : SessionNotes.DeviceNoteType), ("$i", n.Point is { } q ? (long)q.instance : 0L), ("$x", n.Text));
 
     private static List<NoteEntry> ReadNotes(SqliteConnection c)
     {
@@ -212,7 +212,7 @@ public static class JobFile
         while (r.Read())
         {
             var type = r.GetInt32(1);
-            list.Add(new NoteEntry((uint)r.GetInt64(0), type < 0 ? null : new BacnetObjectId((BacnetObjectTypes)type, (uint)r.GetInt64(2)), r.GetString(3)));
+            list.Add(new NoteEntry((uint)r.GetInt64(0), type == SessionNotes.DeviceNoteType ? null : new BacnetObjectId((BacnetObjectTypes)type, (uint)r.GetInt64(2)), r.GetString(3)));
         }
         return list;
     }

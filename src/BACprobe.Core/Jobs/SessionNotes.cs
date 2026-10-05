@@ -17,7 +17,7 @@ public sealed class SessionNotes
     private readonly Dictionary<(uint Device, int Type, uint Instance), string> _notes = [];
 
     // The device note itself lives under a point that no real object can have.
-    private const int DeviceNoteType = -1;
+    internal const int DeviceNoteType = -1; // stored in the job file too (JobFile), so it lives in one place
 
     private static (uint, int, uint) Key(uint device, BacnetObjectId? point) =>
         point is { } p ? (device, (int)p.type, p.instance) : (device, DeviceNoteType, 0);

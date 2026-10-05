@@ -10,9 +10,9 @@ public class MstpHealthTests
     private static MstpFrame Token(long ts, byte from, byte to) => new(ts, (byte)MstpFrameType.Token, to, from, [], 8);
 
     /// <summary>A ring of 1 -> 2 -> 1 -> 2 ... where MAC 2 starts using the token <paramref name="pickupMs"/> after being passed it.</summary>
-    private static MstpBusAnalyzer SlowRing(long pickupMs, int laps = 8)
+    private static MstpBusAnalyzer SlowRing(long pickupMs, int laps = 8, bool timingKnown = true)
     {
-        var a = new MstpBusAnalyzer(38400, Tps);
+        var a = new MstpBusAnalyzer(38400, Tps) { TimingKnown = timingKnown };
         long t = 0;
         for (var i = 0; i < laps; i++)
         {
@@ -48,8 +48,7 @@ public class MstpHealthTests
     [Fact]
     public void A_replay_does_not_invent_pickup_findings()
     {
-        var a = SlowRing(18);
-        a.TimingKnown = false;
+        var a = SlowRing(18, timingKnown: false);
         Assert.DoesNotContain(a.Findings(), f => f.Title.Contains("slow to use"));
     }
 

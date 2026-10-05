@@ -21,13 +21,6 @@ internal static partial class Program
 
         Console.WriteLine();
         Console.WriteLine($"Network check{(jobName is null ? "" : $" (compared with job \"{jobName}\")")}: {NetworkCheck.Summarize(findings)}");
-        foreach (var f in findings.OrderByDescending(f => f.Severity))
-        {
-            var tag = f.Severity switch { FindingSeverity.Problem => "PROBLEM", FindingSeverity.Warning => "WARNING", _ => "NOTE   " };
-            Console.WriteLine($"  [{tag}] {f.Title}");
-            Console.WriteLine($"            {f.Detail}");
-            Console.WriteLine($"            Likely cause: {f.LikelyCause}");
-            Console.WriteLine($"            Next step:    {f.NextStep}");
-        }
+        PrintFindings(findings.OrderByDescending(f => f.Severity));
     }
 }

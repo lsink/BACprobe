@@ -64,6 +64,28 @@ public class ComparisonTests
     }
 
     [Fact]
+    public void Visible_rows_and_the_difference_check_share_one_rule()
+    {
+        var a = new[]
+        {
+            P(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1, "Zone Temp", "70"), P(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1, "SP", "72"),
+            P(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 2, "Same", "5"),
+        };
+        var b = new[]
+        {
+            P(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1, "Zone Temp", "74"), P(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1, "SP", "72"),
+            P(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 2, "Same", "5"),
+        };
+        var rows = Comparison.ComparePoints(a, b);
+        Assert.Equal(3, Comparison.Visible(rows, ignoreLiveInputs: false, differencesOnly: false).Count);
+        Assert.Equal(2, Comparison.Visible(rows, ignoreLiveInputs: true, differencesOnly: false).Count);  // the live input difference is set aside
+        Assert.Single(Comparison.Visible(rows, ignoreLiveInputs: false, differencesOnly: true));          // only the input differs
+        Assert.Empty(Comparison.Visible(rows, ignoreLiveInputs: true, differencesOnly: true));
+        Assert.True(Comparison.HasDifferences(rows, ignoreLiveInputs: false));
+        Assert.False(Comparison.HasDifferences(rows, ignoreLiveInputs: true));
+    }
+
+    [Fact]
     public void The_two_devices_own_objects_are_matched_as_the_device()
     {
         var a = new[] { P(BacnetObjectTypes.OBJECT_DEVICE, 1001, "AHU-1", ""), P(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1, "SP", "72") };

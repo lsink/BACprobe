@@ -7,8 +7,7 @@ namespace BACprobe.Core.Discovery;
 public sealed class DiscoveryService : IDisposable
 {
     private readonly BacnetClient _client;
-    private readonly BacnetIpUdpProtocolTransport? _transport; // null on MS/TP: no BBMD there
-    private readonly IBacnetTransport _anyTransport;
+    private readonly IBacnetTransport _transport;
     private readonly ConcurrentDictionary<uint, DiscoveredDevice> _devices = new();
     // One entry per (device number, address): devices re-announce themselves all day (every Who-Is from a front end),
     // and keeping each repeat would grow without limit over a long session. Repeats add nothing to the conflict check.
@@ -20,15 +19,14 @@ public sealed class DiscoveryService : IDisposable
     }
 
     /// <summary>
-    /// Run on any transport, such as an MS/TP master (see <c>MstpActiveSession</c>). Everything that works over IP (discovery, browsing,
+    /// Run on any transport, such as an MS/TP master (see <c>MstpActive.Join</c>). Everything that works over IP (discovery, browsing,
     /// reads, writes, live values, trends) works the same way; only BBMD registration is IP-specific.
     /// </summary>
     public static DiscoveryService ForTransport(IBacnetTransport transport, int timeoutMs = 3000, int retries = 1) => new(transport, timeoutMs, retries);
 
     private DiscoveryService(IBacnetTransport transport, int timeoutMs, int retries)
     {
-        _anyTransport = transport;
-        _transport = transport as BacnetIpUdpProtocolTransport;
+        _transport = transport;
         // The library defaults to MAX_SEG0, which tells every device "send me nothing bigger than one packet": big object
         // lists and property reads then abort and fall back to slow one-at-a-time reads. Accept segmented replies.
         _client = new BacnetClient(transport, timeoutMs, retries) { MaxSegments = BacnetMaxSegments.MAX_SEG65 };
@@ -41,12 +39,18 @@ public sealed class DiscoveryService : IDisposable
 
     public void Start() => _client.Start();
 
+    /// <summary>A BBMD is a BACnet/IP thing: only an IP connection can register with one.</summary>
+    public bool SupportsBbmd => _transport is BacnetIpUdpProtocolTransport;
+
     /// <summary>Register as a foreign device so broadcasts reach other subnets. Call after <see cref="Start"/>.</summary>
     public async Task<Bbmd.ForeignDeviceRegistration> RegisterWithBbmdAsync(Bbmd.BbmdTarget target, CancellationToken ct = default)
     {
-        if (_transport is null) throw new InvalidOperationException("A BBMD is a BACnet/IP thing; this connection is MS/TP.");
+        if (_transport is not BacnetIpUdpProtocolTransport ip)
+            throw new InvalidOperationException("A BBMD only exists on BACnet/IP, and this connection is MS/TP.\n" +
+                                                "  Likely cause: a BBMD address was given together with an MS/TP port.\n" +
+                                                "  Next step:    leave the BBMD out when connecting through MS/TP.");
         BbmdRegistration?.Dispose();
-        var registration = new Bbmd.ForeignDeviceRegistration(new Bbmd.LibraryBvlcLink(_transport, _client), target);
+        var registration = new Bbmd.ForeignDeviceRegistration(new Bbmd.LibraryBvlcLink(ip, _client), target);
         BbmdRegistration = registration;
         await registration.RegisterAsync(ct: ct);
         return registration;
@@ -93,7 +97,7 @@ public sealed class DiscoveryService : IDisposable
 
     /// <summary>Broadcast "who is a router?" so routers announce which networks they serve.</summary>
     public void AskForRouters() =>
-        _client.SendNetworkMessage(_anyTransport.GetBroadcastAddress(), [], 0, BacnetNetworkMessageTypes.NETWORK_MESSAGE_WHO_IS_ROUTER_TO_NETWORK);
+        _client.SendNetworkMessage(_transport.GetBroadcastAddress(), [], 0, BacnetNetworkMessageTypes.NETWORK_MESSAGE_WHO_IS_ROUTER_TO_NETWORK);
 
     /// <summary>
     /// The network map: devices grouped by network, matched to the routers that announced them, with findings for

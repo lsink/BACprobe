@@ -65,11 +65,9 @@ public sealed partial class CompareViewModel : ObservableObject
         try
         {
             var progress = new Progress<string>(s => Status = s);
-            Status = $"Reading {a.Label}...";
-            var pa = await _getPoints(a, progress);
-            Status = $"Reading {b.Label}...";
-            var pb = await _getPoints(b, progress);
-            _all = Comparison.ComparePoints(pa, pb);
+            Status = $"Reading {a.Label} and {b.Label}...";
+            var both = await Task.WhenAll(_getPoints(a, progress), _getPoints(b, progress)); // two devices, read at the same time
+            _all = Comparison.ComparePoints(both[0], both[1]);
             Status = $"Compared {a.Label} (A) with {b.Label} (B).";
             ApplyFilter();
         }
@@ -89,12 +87,7 @@ public sealed partial class CompareViewModel : ObservableObject
     private void ApplyFilter()
     {
         Rows.Clear();
-        foreach (var r in _all)
-        {
-            if (IgnoreLiveInputs && r.IsLiveInput && r.Kind == CompareKind.Different) continue;
-            if (DifferencesOnly && r.Kind == CompareKind.Same && !r.NamesDiffer) continue;
-            Rows.Add(r);
-        }
+        foreach (var r in Comparison.Visible(_all, IgnoreLiveInputs, DifferencesOnly)) Rows.Add(r);
         Summary = _all.Count == 0 ? "" : Comparison.Summarise(_all, IgnoreLiveInputs);
     }
 
@@ -120,10 +113,9 @@ public sealed partial class CompareViewModel : ObservableObject
         {
             // The device object is a different instance on each device; the point is the same on both.
             BacnetObjectId IdFor(DeviceRow d) => row.Id.type == BacnetObjectTypes.OBJECT_DEVICE ? new BacnetObjectId(row.Id.type, d.Instance) : row.Id;
-            var pa = await _getProps(SelectedA, IdFor(SelectedA));
-            var pb = await _getProps(SelectedB, IdFor(SelectedB));
+            var both = await Task.WhenAll(_getProps(SelectedA, IdFor(SelectedA)), _getProps(SelectedB, IdFor(SelectedB)));
             if (!ReferenceEquals(SelectedRow, row)) return; // the selection moved on while reading
-            var rows = Comparison.CompareProperties(pa, pb);
+            var rows = Comparison.CompareProperties(both[0], both[1]);
             foreach (var r in rows) PropertyRows.Add(r);
             PropertyHeader = $"{row.Object} ({row.Name}): {rows.Count(r => r.Kind != CompareKind.Same)} of {rows.Count} properties differ.";
         }

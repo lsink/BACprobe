@@ -90,13 +90,9 @@ public static class MstpJoinPlanner
                     "Max_Master on the existing masters is lower than this address.",
                     $"Use a free address of {knownMax} or lower, or raise Max_Master on the existing masters."));
         }
-        else if (knownMax < 0)
+        else if (knownMax >= 0) // otherwise a refusal above already explains why there is nothing to choose from
         {
-            mac = 0;
-        }
-        else
-        {
-            var free = Enumerable.Range(1, Math.Min(knownMax, HighestMasterMac)).Cast<int?>().FirstOrDefault(m => !seen.Contains((byte)m!.Value));
+            var free = Enumerable.Range(1, Math.Min(knownMax, HighestMasterMac)).Where(m => !seen.Contains((byte)m)).Select(m => (int?)m).FirstOrDefault();
             if (free is { } f) mac = (byte)f;
             else
                 No("No free master address to use",
@@ -108,7 +104,7 @@ public static class MstpJoinPlanner
         if (canJoin)
             notes.Add(new(FindingSeverity.Info, $"BACprobe will join as master MAC {mac}",
                 $"It will answer Poll For Master, take the token when passed it, pass it on, and send your reads. Its Max_Master will be {HighestMasterMac}, so no existing master is left out of its ring.",
-                "That is what an MS/TP master does.",
+                "",
                 "When you disconnect, the ring pauses briefly while the other masters notice MAC " + mac + " has gone. Do not leave BACprobe running unattended."));
 
         return new MstpJoinPlan(canJoin, mac, HighestMasterMac, [.. notes.OrderByDescending(n => n.Severity)]);

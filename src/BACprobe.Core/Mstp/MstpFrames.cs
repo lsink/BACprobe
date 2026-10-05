@@ -138,7 +138,10 @@ public sealed class MstpFrameParser
     public const int MaxData = 1497;
 
     private const int HeaderLength = 8; // 55 FF type dst src lenHi lenLo crc
-    private readonly List<byte> _buffer = [];
+    // One reusable buffer holding the bytes not yet consumed: no per-read copy, and the leftover is moved down once per Feed.
+    private byte[] _buf = new byte[4096];
+    private int _count;
+    private readonly byte[] _header = new byte[5];
 
     /// <summary>Bytes thrown away while hunting for a preamble: line noise or a sender that is not MS/TP at this baud rate.</summary>
     public long DiscardedBytes { get; private set; }
@@ -146,38 +149,43 @@ public sealed class MstpFrameParser
     /// <summary>Add bytes and return the frames and errors they completed, in order.</summary>
     public IReadOnlyList<object> Feed(ReadOnlySpan<byte> bytes, long timestamp)
     {
-        _buffer.AddRange(bytes.ToArray());
+        if (_count + bytes.Length > _buf.Length) Array.Resize(ref _buf, Math.Max(_buf.Length * 2, _count + bytes.Length));
+        bytes.CopyTo(_buf.AsSpan(_count));
+        _count += bytes.Length;
+
         var found = new List<object>();
         var pos = 0;
-        var header = new byte[5];
 
         while (true)
         {
             // Find the preamble.
-            var start = pos;
-            while (start + 1 < _buffer.Count && !(_buffer[start] == 0x55 && _buffer[start + 1] == 0xFF)) start++;
-            if (start + 1 >= _buffer.Count)
+            var window = _buf.AsSpan(pos, _count - pos);
+            var at = -1;
+            for (var i = 0; i + 1 < window.Length; i++)
+                if (window[i] == 0x55 && window[i + 1] == 0xFF) { at = i; break; }
+
+            if (at < 0)
             {
                 // Keep a trailing 0x55: its 0xFF may be in the next read.
-                var keepFrom = _buffer.Count > 0 && _buffer[^1] == 0x55 ? _buffer.Count - 1 : _buffer.Count;
-                DiscardedBytes += keepFrom - pos;
-                pos = keepFrom;
+                var keep = window.Length > 0 && window[^1] == 0x55 ? 1 : 0;
+                DiscardedBytes += window.Length - keep;
+                pos = _count - keep;
                 break;
             }
-            DiscardedBytes += start - pos;
-            pos = start;
+            DiscardedBytes += at;
+            pos += at;
 
-            if (_buffer.Count - pos < HeaderLength) break; // wait for the rest of the header
+            if (_count - pos < HeaderLength) break; // wait for the rest of the header
 
-            for (var i = 0; i < 5; i++) header[i] = _buffer[pos + 2 + i];
-            if (MstpCrc.HeaderCrc(header) != _buffer[pos + 7])
+            Array.Copy(_buf, pos + 2, _header, 0, 5);
+            if (MstpCrc.HeaderCrc(_header) != _buf[pos + 7])
             {
                 found.Add(new MstpError(timestamp, MstpErrorKind.HeaderCrc));
                 pos++; // rescan from the next byte
                 continue;
             }
 
-            var length = (header[3] << 8) | header[4];
+            var length = (_header[3] << 8) | _header[4];
             if (length > MaxData)
             {
                 found.Add(new MstpError(timestamp, MstpErrorKind.BadLength));
@@ -186,14 +194,13 @@ public sealed class MstpFrameParser
             }
 
             var total = HeaderLength + (length == 0 ? 0 : length + 2);
-            if (_buffer.Count - pos < total) break; // wait for the data
+            if (_count - pos < total) break; // wait for the data
 
-            var data = new byte[length];
+            var data = length == 0 ? [] : _buf.AsSpan(pos + HeaderLength, length).ToArray();
             if (length > 0)
             {
-                for (var i = 0; i < length; i++) data[i] = _buffer[pos + HeaderLength + i];
                 var (lo, hi) = MstpCrc.DataCrc(data);
-                if (lo != _buffer[pos + HeaderLength + length] || hi != _buffer[pos + HeaderLength + length + 1])
+                if (lo != _buf[pos + HeaderLength + length] || hi != _buf[pos + HeaderLength + length + 1])
                 {
                     found.Add(new MstpError(timestamp, MstpErrorKind.DataCrc));
                     pos += total; // the header CRC vouches for the length, so skip the whole damaged frame
@@ -201,11 +208,15 @@ public sealed class MstpFrameParser
                 }
             }
 
-            found.Add(new MstpFrame(timestamp, header[0], header[1], header[2], data, total));
+            found.Add(new MstpFrame(timestamp, _header[0], _header[1], _header[2], data, total));
             pos += total;
         }
 
-        _buffer.RemoveRange(0, pos);
+        if (pos > 0)
+        {
+            Buffer.BlockCopy(_buf, pos, _buf, 0, _count - pos);
+            _count -= pos;
+        }
         return found;
     }
 }

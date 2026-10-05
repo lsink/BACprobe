@@ -34,11 +34,11 @@ public static class MstpActive
     /// Join the trunk as a master and return a connection that works like the IP one. The caller must already have shown the user the
     /// plan and got a yes. Throws if the plan says not to join.
     /// </summary>
-    public static DiscoveryService Join(string port, int baud, MstpJoinPlan plan, int timeoutMs = 4000, int retries = 1)
+    public static DiscoveryService Join(string port, int baud, MstpJoinPlan plan)
     {
         if (!plan.CanJoin) throw new InvalidOperationException("The survey says it is not safe to join this trunk.");
         var transport = SerialTransport.Mstp(port, baud, plan.Mac, plan.MaxMaster, maxInfoFrames: 1);
-        var svc = DiscoveryService.ForTransport(transport, timeoutMs, retries);
+        var svc = DiscoveryService.ForTransport(transport, timeoutMs: 4000, retries: 1); // 4 s: a reply can wait a token loop
         try
         {
             svc.Start();

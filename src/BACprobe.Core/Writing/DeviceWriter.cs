@@ -18,9 +18,23 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
     public WriteLog Log => log;
     public OverrideTracker Overrides => tracker;
 
+    /// <summary>
+    /// Read-only mode, enforced here and not only by hiding buttons: no new write and no Out_Of_Service on goes out, whoever asks.
+    /// Releasing an override and putting a point back in service still work, because giving control back is cleanup, not a change.
+    /// </summary>
+    public bool ReadOnly { get; set; }
+
+    private static readonly WriteOutcome ReadOnlyOutcome = new(false,
+        "Read-only mode is on, so nothing was written.\n  Likely cause: the Read-only box at the top of the app is ticked (it starts ticked).\n  Next step:    untick Read-only if you mean to make a change.");
+
     public async Task<WriteOutcome> ExecuteAsync(WriteRequest request, CancellationToken ct = default)
     {
         var action = request.IsRelease ? "release" : $"write {request.ValueText}";
+        if (ReadOnly && !request.IsRelease)
+        {
+            Record(request, action, false, "blocked: read-only mode");
+            return ReadOnlyOutcome;
+        }
         try
         {
             if (request.Priority is < 1 or > 16)
@@ -81,7 +95,12 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
     public async Task<WriteOutcome> SetOutOfServiceAsync(OutOfServiceRequest request, CancellationToken ct = default)
     {
         var action = request.TurnOn ? "out of service: on" : "out of service: off";
-        var held = new TrackedOverride(request.Device, request.DeviceName, request.Point, request.ObjectName,
+        if (ReadOnly && request.TurnOn)
+        {
+            LogOutOfService(request, action, false, "blocked: read-only mode");
+            return ReadOnlyOutcome;
+        }
+        var held =new TrackedOverride(request.Device, request.DeviceName, request.Point, request.ObjectName,
             TrackedOverride.OutOfServicePriority, "out of service");
         try
         {

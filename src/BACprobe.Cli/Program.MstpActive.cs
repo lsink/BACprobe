@@ -50,13 +50,7 @@ internal static partial class Program
         var s = result.Survey;
         Console.WriteLine($"Heard {s.Frames} good frames ({s.Errors} damaged); masters: {string.Join(", ", s.Nodes.Where(n => n.Role == "master").Select(n => n.Mac))}; " +
                           $"all addresses seen: {string.Join(", ", s.Nodes.Select(n => n.Mac))}.");
-        foreach (var n in result.Plan.Notes)
-        {
-            var tag = n.Severity switch { FindingSeverity.Problem => "[REFUSED]", FindingSeverity.Warning => "[WARNING]", _ => "[plan]   " };
-            Console.WriteLine($"{tag} {n.Title}");
-            Console.WriteLine($"          {n.Detail}");
-            if (n.Severity != FindingSeverity.Info || n.NextStep.Length > 0) Console.WriteLine($"          Next step: {n.NextStep}");
-        }
+        PrintFindings(result.Plan.Notes, problemTag: "REFUSED", infoTag: "plan");
         if (!result.Plan.CanJoin) return (null, "Not joining the trunk. Nothing was transmitted.");
 
         Console.WriteLine();

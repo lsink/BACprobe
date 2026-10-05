@@ -373,6 +373,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     partial void OnReadOnlyModeChanged(bool value)
     {
         ReadOnlySetting.Save(value);
+        if (_writer is not null) _writer.ReadOnly = value;
         OnPropertyChanged(nameof(ShowOutOfServicePanel));
     }
 
@@ -696,6 +697,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             svc.Start();
             _svc = svc;
             _writer = svc.CreateWriter(_log, _overrides);
+            _writer.ReadOnly = ReadOnlyMode; // the app's switch is enforced where the write happens, not only by hiding buttons
             CanUseLive = true;
             BbmdStatus = "";
             if (bbmd is not null)

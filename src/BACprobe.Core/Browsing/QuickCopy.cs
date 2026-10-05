@@ -19,11 +19,8 @@ public static partial class QuickCopy
     }
 
     /// <summary>The same filter narrowed to one object: its type number and instance.</summary>
-    public static string? WiresharkFilterForObject(string addressText, uint objectType, uint instance)
-    {
-        var m = Ipv4().Match(addressText);
-        return m.Success
-            ? $"bacnet && ip.addr == {m.Value} && bacapp.objectType == {objectType} && bacapp.instance_number == {instance}"
+    public static string? WiresharkFilterForObject(string addressText, uint objectType, uint instance) =>
+        WiresharkFilterForAddress(addressText) is { } device
+            ? $"{device} && bacapp.objectType == {objectType} && bacapp.instance_number == {instance}"
             : null;
-    }
 }

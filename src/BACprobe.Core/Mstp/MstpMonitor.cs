@@ -63,10 +63,10 @@ public sealed class MstpMonitor
     /// Analyse a saved raw capture. A recording has no clock, so each byte is given the time it would take on the wire and
     /// load / token loop time are left out of the results.
     /// </summary>
-    public static MstpMonitor FromRecording(ReadOnlySpan<byte> bytes, int baud)
+    public static MstpMonitor FromRecording(ReadOnlySpan<byte> bytes, int baud, int keepFrames = 2000)
     {
         const long tps = 1_000_000; // one tick = 1 microsecond on the pretend clock
-        var m = new MstpMonitor(baud, timingKnown: false, ticksPerSecond: tps);
+        var m = new MstpMonitor(baud, timingKnown: false, keepFrames: keepFrames, ticksPerSecond: tps);
         var ticksPerByte = tps * 10.0 / baud;
         for (var i = 0; i < bytes.Length; i += 64)
         {
@@ -147,15 +147,35 @@ public sealed class MstpMonitor
         }
     }
 
+    /// <summary>
+    /// The lines added after <paramref name="afterSequence"/> (0 for all), oldest first, with the same filters as <see cref="Log"/>.
+    /// Walks back from the newest line and stops at the first one already seen, so asking every tick costs only the new lines.
+    /// </summary>
+    public IReadOnlyList<MstpLogLine> LogSince(long afterSequence, byte? mac = null, bool tokenAndPollsToo = true)
+    {
+        lock (_lock)
+        {
+            var fresh = new List<MstpLogLine>();
+            for (var node = _log.Last; node is not null && node.Value.Sequence > afterSequence; node = node.Previous)
+                if (Passes(node.Value, mac, tokenAndPollsToo)) fresh.Add(node.Value);
+            fresh.Reverse();
+            return fresh;
+        }
+    }
+
+    private static bool Passes(MstpLogLine l, byte? mac, bool tokenAndPollsToo) =>
+        (mac is not { } m || l.Source == m || l.Destination == m) &&
+        (tokenAndPollsToo || l.IsError || l.Type is not ((byte)MstpFrameType.Token or (byte)MstpFrameType.PollForMaster));
+
     /// <summary>The most recent log lines, optionally only those involving one MAC (as sender or receiver) or only errors.</summary>
     public IReadOnlyList<MstpLogLine> Log(byte? mac = null, bool tokenAndPollsToo = true, int max = 500)
     {
         lock (_lock)
         {
-            IEnumerable<MstpLogLine> q = _log;
-            if (mac is { } m) q = q.Where(l => l.Source == m || l.Destination == m);
-            if (!tokenAndPollsToo) q = q.Where(l => l.IsError || l.Type is not ((byte)MstpFrameType.Token or (byte)MstpFrameType.PollForMaster));
-            return [.. q.TakeLast(max)];
+            return [.. _log.Where(l => Passes(l, mac, tokenAndPollsToo)).TakeLast(max)];
         }
     }
+
+    /// <summary>Sequence number of the newest log line (0 before any), to pass back to <see cref="LogSince"/>.</summary>
+    public long LastSequence { get { lock (_lock) return _seq; } }
 }
