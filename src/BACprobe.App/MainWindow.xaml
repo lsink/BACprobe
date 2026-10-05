@@ -14,7 +14,7 @@
   </Window.DataContext>
   <!-- Scrolls instead of clipping when the screen is shorter than the layout needs -->
   <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-  <Border Padding="20" MinHeight="820" Height="{Binding ActualHeight, ElementName=Scroller}">
+  <Border Padding="20" MinHeight="960" Height="{Binding ActualHeight, ElementName=Scroller}">
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
@@ -308,6 +308,7 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" MinHeight="80" />
+              <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <DockPanel Grid.Row="0" Margin="0,0,0,6">
               <Button DockPanel.Dock="Right" Content="Trend live..." Padding="12,3" Command="{Binding TrendLiveCommand}"
@@ -357,6 +358,15 @@
                 <Button Content="Release my override" Padding="16,4" Margin="8,0,0,0"
                         Command="{Binding ReleaseSelectedCommand}" />
               </StackPanel>
+            </StackPanel>
+            <!-- A note for the selected point (the device when no point is selected). Saved with the job; never written to a device. -->
+            <StackPanel Grid.Row="4" Margin="0,8,0,0"
+                        Visibility="{Binding CanNote, Converter={StaticResource BoolToVis}}">
+              <TextBlock Text="{Binding NoteTitle}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              <TextBox Text="{Binding NoteText, UpdateSourceTrigger=PropertyChanged}" Height="58" Margin="0,4,0,0"
+                       AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                       AutomationProperties.Name="Note"
+                       ToolTip="Your own note, e.g. what you found or why you left something overridden. Saved in the job file (Save job...); never sent to the device." />
             </StackPanel>
             <!-- Out of service freezes a point (any point that has the property, inputs included): held to the same confirmation and log as a write -->
             <StackPanel Grid.Row="2" Margin="0,0,0,10" Orientation="Horizontal"

@@ -20,6 +20,7 @@ internal static partial class Program
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
           bacprobe job show  <site.bacprobe> [--device <n>] [--log]
+          bacprobe job note  <site.bacprobe> --device <n> [--object <type:n>] --text "..."
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe routers   [--adapter <ip>] [--wait <seconds>]
           bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]

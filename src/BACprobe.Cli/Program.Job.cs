@@ -10,8 +10,40 @@ internal static partial class Program
         {
             "save" => JobSaveAsync(opts),
             "show" => Task.FromResult(JobShow(opts)),
-            _ => throw new ArgumentException("Use 'bacprobe job save --out site.bacprobe --all' or 'bacprobe job show site.bacprobe'."),
+            "note" => Task.FromResult(JobNote(opts)),
+            _ => throw new ArgumentException("Use 'bacprobe job save --out site.bacprobe --all', 'bacprobe job show site.bacprobe' or 'bacprobe job note site.bacprobe --device 1001 --text \"...\"'."),
         };
+
+    /// <summary>Add, change or clear (--text "") a note on a device or, with --object, one of its points. Edits the job file in place.</summary>
+    private static int JobNote(Dictionary<string, string?> opts)
+    {
+        var file = opts.GetValueOrDefault("_1") ?? throw new ArgumentException("Say which file: bacprobe job note site.bacprobe --device 1001 --text \"...\"");
+        if (!opts.TryGetValue("device", out var dev) || !uint.TryParse(dev, out var instance))
+            throw new ArgumentException("Say which device with --device <instance>.");
+        if (!opts.TryGetValue("text", out var text))
+            throw new ArgumentException("Give the note with --text \"...\" (an empty --text \"\" removes the note).");
+
+        var job = LoadJob(file);
+        if (job.Devices.All(d => d.Instance != instance))
+            throw new ArgumentException($"Device {instance} is not in that job. Run 'bacprobe job show {file}' to see what it holds.");
+
+        System.IO.BACnet.BacnetObjectId? point = null;
+        if (opts.TryGetValue("object", out var spec) && spec is not null)
+        {
+            if (!BacnetNames.TryParseObject(spec, out var id)) throw new ArgumentException($"'{spec}' is not an object. Use something like ai:1 or bv:7.");
+            point = id;
+        }
+
+        var notes = new SessionNotes();
+        notes.Load(job.AllNotes);
+        notes.Set(instance, point, text);
+        try { JobFile.Save(file, job with { Notes = notes.All, Info = job.Info with { SavedAt = DateTimeOffset.Now } }); }
+        catch (JobFileException ex) { return Fail(ex.Message); }
+
+        var what = point is { } p ? $"{BacnetNames.ObjectLabel(p)} on device {instance}" : $"device {instance}";
+        Console.WriteLine(notes.Has(instance, point) ? $"Saved the note on {what}." : $"Removed the note on {what}.");
+        return 0;
+    }
 
     private static async Task<int> JobSaveAsync(Dictionary<string, string?> opts)
     {
@@ -46,7 +78,7 @@ internal static partial class Program
         var devices = collected.Devices.Select(d => SavedDevice.From(d.Device, d.Name, d.Objects)).ToList();
         try
         {
-            JobFile.Save(path, new JobSnapshot(info, devices, previous?.WriteLog ?? []));
+            JobFile.Save(path, new JobSnapshot(info, devices, previous?.WriteLog ?? [], previous?.AllNotes));
         }
         catch (JobFileException ex)
         {
@@ -95,6 +127,18 @@ internal static partial class Program
             foreach (var d in job.Devices)
                 Console.WriteLine($"{d.Instance,-9} {d.AddressText,-22} {d.VendorName ?? $"vendor {d.VendorId}",-22} {d.ModelName ?? "-",-16} " +
                                   $"{(d.PointsRead ? d.Objects.Count.ToString() : "not read"),-7} {d.Name}");
+        }
+
+        if (job.AllNotes.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Notes: {job.AllNotes.Count}");
+            foreach (var n in job.AllNotes)
+            {
+                var dname = job.Devices.FirstOrDefault(x => x.Instance == n.Device)?.Name;
+                var who = $"device {n.Device}{(dname is null ? "" : $" \"{dname}\"")}{(n.Point is { } p ? $", {BacnetNames.ObjectLabel(p)}" : "")}";
+                Console.WriteLine($"  {who}: {n.Text.Replace("\n", "\n      ")}");
+            }
         }
 
         if (opts.ContainsKey("log") || job.WriteLog.Count > 0)

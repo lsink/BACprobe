@@ -686,7 +686,57 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         PropertiesHeader = "Properties";
     }
 
-    partial void OnSelectedDeviceChanged(DeviceRow? value) => _ = LoadObjectsAsync(value);
+    partial void OnSelectedDeviceChanged(DeviceRow? value)
+    {
+        RefreshNoteTarget();
+        _ = LoadObjectsAsync(value);
+    }
+
+    // Notes: free text for the selected point (or the device when no point is selected), kept with the job file.
+    public SessionNotes Notes { get; } = new();
+    [ObservableProperty] private string _noteText = "";
+    [ObservableProperty] private string _noteTitle = "";
+    [ObservableProperty] private bool _canNote;
+    private bool _loadingNote;
+    private (uint Device, BacnetObjectId? Point)? _noteTarget;
+
+    private void RefreshNoteTarget()
+    {
+        _loadingNote = true; // moving to another note must not save the old text into it
+        try
+        {
+            if (SelectedDevice is not { } d)
+            {
+                _noteTarget = null;
+                CanNote = false;
+                NoteText = "";
+                NoteTitle = "";
+                return;
+            }
+            BacnetObjectId? point = SelectedObject?.Summary.Id;
+            _noteTarget = (d.Instance, point);
+            CanNote = true;
+            NoteText = Notes.Get(d.Instance, point);
+            UpdateNoteTitle();
+        }
+        finally { _loadingNote = false; }
+    }
+
+    private void UpdateNoteTitle()
+    {
+        if (_noteTarget is not { } t) return;
+        var name = SelectedDevice is { } d && d.Name != "-" ? d.Name : $"device {t.Device}";
+        var what = t.Point is { } p ? $"{SelectedObject?.Name ?? BacnetNames.ObjectLabel(p)} ({BacnetNames.ObjectLabel(p)})" : name;
+        var total = Notes.CountFor(t.Device);
+        NoteTitle = $"Note for {what}" + (total > 0 ? $"  -  {total} note(s) on this device" : "");
+    }
+
+    partial void OnNoteTextChanged(string value)
+    {
+        if (_loadingNote || _noteTarget is not { } t) return;
+        Notes.Set(t.Device, t.Point, value);
+        UpdateNoteTitle();
+    }
 
     private async Task LoadObjectsAsync(DeviceRow? row)
     {
@@ -817,6 +867,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedObjectChanged(ObjectRow? value)
     {
+        RefreshNoteTarget();
         // A value typed for one point must never carry over to the next.
         WriteValueText = "";
         SelectedStateChoice = null;
@@ -964,7 +1015,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 BbmdText.Trim().Length > 0 ? BbmdText.Trim() : null, SelectedAdapter?.Info.Cidr,
                 typeof(MainViewModel).Assembly.GetName().Version?.ToString() ?? "");
 
-            await Task.Run(() => JobFile.Save(path, new JobSnapshot(info, saved, writeLog)));
+            await Task.Run(() => JobFile.Save(path, new JobSnapshot(info, saved, writeLog, Notes.All)));
             _persistedLog = writeLog;
             _sessionLogSaved = sessionLog.Count;
 
@@ -1005,6 +1056,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _writer = null;
         ResetBrowsing();
 
+        Notes.Load(job.AllNotes);
+        RefreshNoteTarget();
         _baseline = job.Devices;
         _baselineName = job.Info.Name;
         ClearNetworkCheck();

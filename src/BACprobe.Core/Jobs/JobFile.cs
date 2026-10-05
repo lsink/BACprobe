@@ -13,7 +13,7 @@ namespace BACprobe.Core.Jobs;
 /// </summary>
 public static class JobFile
 {
-    public const int SchemaVersion = 4; // 2 added objects.priority_slots, 3 state_texts, 4 status_flags + reliability; older files still load
+    public const int SchemaVersion = 5; // 2 added objects.priority_slots, 3 state_texts, 4 status_flags + reliability, 5 notes; older files still load
     public const string Extension = ".bacprobe";
     private const string AppMarker = "BACprobe";
 
@@ -33,6 +33,9 @@ public static class JobFile
         CREATE TABLE write_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, device_instance INTEGER NOT NULL,
             device_name TEXT, point TEXT, action TEXT, priority INTEGER, success INTEGER NOT NULL, result TEXT);
+        CREATE TABLE notes (
+            device_instance INTEGER NOT NULL, object_type INTEGER NOT NULL, object_instance INTEGER NOT NULL, text TEXT NOT NULL,
+            PRIMARY KEY (device_instance, object_type, object_instance));
         """;
 
     private static string ConnectionString(string path, SqliteOpenMode mode) =>
@@ -53,6 +56,7 @@ public static class JobFile
                 WriteMeta(conn, tx, job.Info);
                 foreach (var d in job.Devices) WriteDevice(conn, tx, d);
                 foreach (var e in job.WriteLog) WriteLogRow(conn, tx, e);
+                foreach (var n in job.Notes ?? []) WriteNote(conn, tx, n);
                 tx.Commit();
             }
             File.Move(temp, path, overwrite: true);
@@ -100,7 +104,7 @@ public static class JobFile
                 meta.GetValueOrDefault("name", ""), meta.GetValueOrDefault("notes", ""),
                 ParseTime(meta.GetValueOrDefault("created")), ParseTime(meta.GetValueOrDefault("saved")),
                 meta.GetValueOrDefault("bbmd"), meta.GetValueOrDefault("adapter"), meta.GetValueOrDefault("app_version", ""));
-            return new JobSnapshot(info, ReadDevices(conn, version), ReadLog(conn));
+            return new JobSnapshot(info, ReadDevices(conn, version), ReadLog(conn), version >= 5 ? ReadNotes(conn) : []);
         }
         catch (SqliteException ex)
         {
@@ -171,6 +175,25 @@ public static class JobFile
             """,
             ("$t", e.Time.ToString("o", CultureInfo.InvariantCulture)), ("$d", (long)e.DeviceInstance), ("$dn", e.DeviceName),
             ("$p", e.Point), ("$a", e.Action), ("$pr", e.Priority), ("$s", e.Success ? 1 : 0), ("$r", e.Result));
+
+    // A device note is stored under object type -1, which no real object has.
+    private static void WriteNote(SqliteConnection c, SqliteTransaction tx, NoteEntry n) =>
+        Exec(c, tx, "INSERT OR REPLACE INTO notes(device_instance, object_type, object_instance, text) VALUES ($d, $t, $i, $x)",
+            ("$d", (long)n.Device), ("$t", n.Point is { } p ? (int)p.type : -1), ("$i", n.Point is { } q ? (long)q.instance : 0L), ("$x", n.Text));
+
+    private static List<NoteEntry> ReadNotes(SqliteConnection c)
+    {
+        var list = new List<NoteEntry>();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT device_instance, object_type, object_instance, text FROM notes ORDER BY device_instance, object_type, object_instance";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var type = r.GetInt32(1);
+            list.Add(new NoteEntry((uint)r.GetInt64(0), type < 0 ? null : new BacnetObjectId((BacnetObjectTypes)type, (uint)r.GetInt64(2)), r.GetString(3)));
+        }
+        return list;
+    }
 
     private static Dictionary<string, string> ReadMeta(SqliteConnection c)
     {

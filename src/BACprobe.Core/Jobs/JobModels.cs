@@ -67,7 +67,12 @@ public sealed record SavedDevice(
 }
 
 /// <summary>Everything in a job file.</summary>
-public sealed record JobSnapshot(JobInfo Info, IReadOnlyList<SavedDevice> Devices, IReadOnlyList<WriteLogEntry> WriteLog);
+public sealed record JobSnapshot(JobInfo Info, IReadOnlyList<SavedDevice> Devices, IReadOnlyList<WriteLogEntry> WriteLog,
+    IReadOnlyList<NoteEntry>? Notes = null)
+{
+    /// <summary>The notes, never null (files from before notes existed have none).</summary>
+    public IReadOnlyList<NoteEntry> AllNotes => Notes ?? [];
+}
 
 /// <summary>A job file that cannot be used. The message already says what is likely wrong and what to do.</summary>
 public sealed class JobFileException(string message, Exception? inner = null) : Exception(message, inner);
