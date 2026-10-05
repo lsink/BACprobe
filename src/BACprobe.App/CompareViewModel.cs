@@ -23,7 +23,7 @@ public sealed partial class CompareViewModel : ObservableObject
         Devices = devices;
         _getPoints = getPoints;
         _getProps = getProps;
-        _selectedA = first ?? devices.FirstOrDefault();
+        _selectedA = first ?? (devices.Count > 0 ? devices[0] : null);
         _selectedB = devices.FirstOrDefault(d => !ReferenceEquals(d, _selectedA));
     }
 

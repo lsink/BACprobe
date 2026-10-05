@@ -24,30 +24,7 @@
     <!-- What looks wrong, worst first; each with its likely cause and next step -->
     <Border Grid.Row="1" BorderThickness="1" BorderBrush="#33808080" CornerRadius="4" Padding="8,4">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <ItemsControl ItemsSource="{Binding Findings}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate DataType="{x:Type app:FindingRow}">
-              <StackPanel Margin="0,4,0,6">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="{Binding Icon}" Width="22" FontWeight="Bold">
-                    <TextBlock.Style>
-                      <Style TargetType="TextBlock">
-                        <Setter Property="Foreground" Value="SteelBlue" />
-                        <Style.Triggers>
-                          <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
-                          <DataTrigger Binding="{Binding Severity}" Value="Problem"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
-                        </Style.Triggers>
-                      </Style>
-                    </TextBlock.Style>
-                  </TextBlock>
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                </StackPanel>
-                <TextBlock Text="{Binding Detail}" Margin="22,2,0,0" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding Help}" Margin="22,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
-              </StackPanel>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding Findings}" />
       </ScrollViewer>
     </Border>
 

@@ -599,14 +599,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public MainViewModel()
     {
         _selectedPointFilter = PointFilters[0];
-        _log.Added += e => OnUi(() => WriteLogLines.Add(e.Text));
+        _log.Added += e => UiThread.Invoke(() => WriteLogLines.Add(e.Text));
         RefreshAdapters();
-    }
-
-    private static void OnUi(Action a)
-    {
-        var d = Application.Current?.Dispatcher;
-        if (d is null || d.CheckAccess()) a(); else d.Invoke(a);
     }
 
     [RelayCommand]
@@ -705,7 +699,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 Status = $"Registering with BBMD {bbmd}...";
                 var registration = await svc.RegisterWithBbmdAsync(bbmd);
                 BbmdStatus = registration.Message;
-                registration.Changed += () => OnUi(() => BbmdStatus = registration.Message); // e.g. a renewal that failed later
+                registration.Changed += () => UiThread.Invoke(() => BbmdStatus = registration.Message); // e.g. a renewal that failed later
                 Status = "Sending Who-Is...";
             }
             var found = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(5));
@@ -877,11 +871,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             new LiveOptions(TimeSpan.FromSeconds(LiveIntervalSeconds), UseCov));
 
         // The watcher reports from background threads (COV notifications arrive on the network thread): hop to the UI thread.
-        watcher.StatusChanged += text => PostUi(() =>
+        watcher.StatusChanged += text => UiThread.Post(() =>
         {
             if (!cts.IsCancellationRequested) LiveStatus = text;
         });
-        watcher.PointChanged += summary => PostUi(() =>
+        watcher.PointChanged += summary => UiThread.Post(() =>
         {
             if (cts.IsCancellationRequested || !rows.TryGetValue(summary, out var row)) return;
             row.Refresh(summary);
@@ -894,18 +888,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private async Task RunLiveAsync(LiveWatcher watcher, CancellationToken ct)
     {
-        // Off the UI thread: the watch loop decodes every poll and notification. Its events already hop back via PostUi.
+        // Off the UI thread: the watch loop decodes every poll and notification. Its events already hop back via UiThread.
         var failure = await Task.Run(() => watcher.RunAsync(ct));
         if (failure is null || ct.IsCancellationRequested) return;
         // The device stopped answering: stop and say why, instead of showing stale numbers as if they were live.
         IsLive = false;
         Status = failure;
-    }
-
-    private static void PostUi(Action a)
-    {
-        var d = Application.Current?.Dispatcher;
-        if (d is null) a(); else d.BeginInvoke(a);
     }
 
     /// <summary>Update the Present Value and Priority Array rows in place, so the properties panel does not flicker or lose its place.</summary>

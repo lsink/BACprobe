@@ -10,16 +10,23 @@ using CommunityToolkit.Mvvm.Input;
 namespace BACprobe.App;
 
 /// <summary>One watched point as the list shows it.</summary>
-public sealed partial class WatchRow(WatchEntry entry, string deviceName) : ObservableObject
+public sealed partial class WatchRow : ObservableObject
 {
-    public WatchEntry Entry { get; } = entry;
+    public WatchRow(WatchEntry entry, string deviceName)
+    {
+        Entry = entry;
+        Device = $"{entry.Device} - {deviceName}"; // these two never change: built once, not on every live update
+        ObjectId = $"{BacnetNames.ObjectTypeShort(entry.Point.type)} {entry.Point.instance}";
+    }
+
+    public WatchEntry Entry { get; }
+    public string Device { get; }
+    public string ObjectId { get; }
     public ObjectSummary? Summary { get; private set; }
 
     [ObservableProperty] private string _problem = "";
     [ObservableProperty] private string _updated = "";
 
-    public string Device => $"{Entry.Device} - {deviceName}";
-    public string Object => $"{BacnetNames.ObjectTypeShort(Entry.Point.type)} {Entry.Point.instance}";
     public string Name => Summary?.Name ?? Entry.Label;
     public string Value => Summary is null ? "-" : Summary.ValueText;
     public string Status => Problem.Length > 0 ? Problem : Summary is null ? "" : Summary.IsOverridden ? Summary.OverrideText : Summary.HasProblem ? Summary.ProblemText : "";
@@ -29,7 +36,9 @@ public sealed partial class WatchRow(WatchEntry entry, string deviceName) : Obse
         Summary = summary;
         Problem = problem ?? "";
         if (stamp) Updated = DateTime.Now.ToString("HH:mm:ss");
-        OnPropertyChanged(string.Empty);
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(Value));
+        OnPropertyChanged(nameof(Status));
     }
 }
 
@@ -103,12 +112,12 @@ public sealed partial class WatchViewModel : ObservableObject, IDisposable
             var bad = readings.Count(r => r.Summary is null);
             Status = bad == 0 ? $"Watching {summaries.Count} point(s) live." : $"Watching {summaries.Count} point(s); {bad} could not be read (see the Status column).";
 
-            session.PointChanged += (device, s) => Post(() =>
+            session.PointChanged += (_, s) => UiThread.Post(() =>
             {
                 if (cts.IsCancellationRequested || !summaries.TryGetValue(s, out var row)) return;
                 row.Set(s, null, stamp: true);
             });
-            session.DeviceStatus += (device, text) => Post(() => SetDeviceStatus(cts, device, text));
+            session.DeviceStatus += (device, text) => UiThread.Post(() => SetDeviceStatus(cts, device, text));
             _ = Task.Run(() => session.RunAsync(readings, cts.Token));
         }
         catch (OperationCanceledException) { }
@@ -125,12 +134,6 @@ public sealed partial class WatchViewModel : ObservableObject, IDisposable
         for (var i = 0; i < DeviceStatuses.Count; i++)
             if (DeviceStatuses[i].StartsWith(prefix, StringComparison.Ordinal)) { DeviceStatuses[i] = prefix + text; return; }
         DeviceStatuses.Add(prefix + text);
-    }
-
-    private static void Post(Action a)
-    {
-        var d = Application.Current?.Dispatcher;
-        if (d is null) a(); else d.BeginInvoke(a);
     }
 
     private void Stop()

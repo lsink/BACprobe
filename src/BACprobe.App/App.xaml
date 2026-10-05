@@ -1,7 +1,30 @@
 <Application x:Class="BACprobe.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:app="clr-namespace:BACprobe.App"
              StartupUri="MainWindow.xaml"
              ThemeMode="System">
-  <Application.Resources />
+  <Application.Resources>
+    <!-- How a finding looks everywhere (network check, BBMD check, MS/TP monitor): an implicit template, so any list of FindingRow uses it. -->
+    <DataTemplate DataType="{x:Type app:FindingRow}">
+      <StackPanel Margin="0,4,0,6">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="{Binding Icon}" Width="22" FontWeight="Bold">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="SteelBlue" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
+                  <DataTrigger Binding="{Binding Severity}" Value="Problem"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        </StackPanel>
+        <TextBlock Text="{Binding Detail}" Margin="22,2,0,0" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Help}" Margin="22,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+  </Application.Resources>
 </Application>

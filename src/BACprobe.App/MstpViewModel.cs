@@ -32,7 +32,7 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
     }
 
     public ObservableCollection<string> Ports { get; } = [];
-    public IReadOnlyList<string> Bauds => BaudNames;
+    public static IReadOnlyList<string> Bauds => BaudNames;
     public ObservableCollection<MstpNodeRow> Nodes { get; } = [];
     public ObservableCollection<FindingRow> Findings { get; } = [];
     public ObservableCollection<MstpLogLine> LogLines { get; } = [];
@@ -74,11 +74,18 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(SaveCaptureCommand))]
     private bool _hasCapture;
 
-    partial void OnSelectedPortChanged(string? value)
+    // The adapters' latency timers come from the registry: read once, off the UI thread, and again only after Refresh.
+    private IReadOnlyList<FtdiLatency>? _latencies;
+
+    partial void OnSelectedPortChanged(string? value) => _ = UpdateLatencyWarningAsync(value);
+
+    private async Task UpdateLatencyWarningAsync(string? port)
     {
         LatencyWarning = "";
-        if (value is null || !OperatingSystem.IsWindows()) return;
-        var bad = FtdiLatency.ReadAll().FirstOrDefault(l => string.Equals(l.PortName, value, StringComparison.OrdinalIgnoreCase) && l.IsTooHigh);
+        if (port is null || !OperatingSystem.IsWindows()) return;
+        _latencies ??= await Task.Run(() => FtdiLatency.ReadAll());
+        if (!string.Equals(SelectedPort, port, StringComparison.Ordinal)) return; // another port was picked while the registry was read
+        var bad = _latencies.FirstOrDefault(l => string.Equals(l.PortName, port, StringComparison.OrdinalIgnoreCase) && l.IsTooHigh);
         if (bad is not null) LatencyWarning = bad.Verdict;
     }
 
@@ -89,11 +96,13 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
         Ports.Clear();
         foreach (var p in MstpPortCapture.PortNames()) Ports.Add(p);
         SelectedPort = keep is not null && Ports.Contains(keep) ? keep : Ports.FirstOrDefault();
+        _latencies = null; // an adapter may have been replugged or its timer changed
+        _ = UpdateLatencyWarningAsync(SelectedPort);
         if (Ports.Count == 0)
             Status = "No serial ports found. Plug in the USB-RS485 adapter and install its driver, then press Refresh. You can still open a saved capture or the demo.";
     }
 
-    private bool CanStart() => !IsListening && !IsDetecting && SelectedPort is not null;
+    private bool CanStart() => CanOpenOther() && SelectedPort is not null;
 
     [RelayCommand(CanExecute = nameof(CanStart))]
     private async Task StartAsync()
@@ -132,7 +141,7 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
             Directory.CreateDirectory(dir);
             _recordPath = Path.Combine(dir, $"capture-{DateTime.Now:yyyyMMdd-HHmmss}.bin");
             _capture = new MstpPortCapture(port, _monitor!, _recordPath);
-            _capture.Failed += msg => Application.Current?.Dispatcher.Invoke(() => { Status = msg; StopListening(); });
+            _capture.Failed += msg => UiThread.Invoke(() => { Status = msg; StopListening(); });
             _capture.Start();
         }
         catch (IOException ex)
@@ -140,7 +149,7 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
             Status = ex.Message;
             _capture?.Dispose();
             _capture = null;
-            EndSession();
+            _monitor = null;
             return;
         }
         IsListening = true;
@@ -247,10 +256,9 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
         Nodes.Clear();
         Findings.Clear();
         LogLines.Clear();
+        _rebuildLog = true; // a new monitor starts counting its lines again
         Summary = "";
     }
-
-    private void EndSession() => _monitor = null;
 
     partial void OnFilterTextChanged(string value) => Refresh(force: true);
     partial void OnHideTokenAndPollsChanged(bool value) => Refresh(force: true);
@@ -275,14 +283,37 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
         }
 
         if (Paused && !force) return;
-        var lines = _monitor.Log(FilterMac, tokenAndPollsToo: !HideTokenAndPolls, max: 500);
-        var lastShown = LogLines.Count > 0 ? LogLines[^1].Sequence : -1;
-        var lastNew = lines.Count > 0 ? lines[^1].Sequence : -1;
-        if (lastShown == lastNew && LogLines.Count == lines.Count && !force) return;
-        LogLines.Clear();
-        foreach (var l in lines) LogLines.Add(l);
+        var mac = FilterMac;
+        var hide = HideTokenAndPolls;
+        var upTo = _monitor.LastSequence; // taken first: anything newer is fetched next tick, nothing is shown twice
+
+        if (force || _rebuildLog || mac != _shownMac || hide != _shownHide)
+        {
+            // New session, new filter, or un-paused: rebuild from the monitor's recent lines.
+            var lines = _monitor.Log(mac, tokenAndPollsToo: !hide, max: MaxShownLines);
+            LogLines.Clear();
+            foreach (var l in lines) LogLines.Add(l);
+            _shownMac = mac;
+            _shownHide = hide;
+            _rebuildLog = false;
+            _lastShown = Math.Max(upTo, lines.Count > 0 ? lines[^1].Sequence : 0);
+            LogChanged?.Invoke();
+            return;
+        }
+
+        // The usual tick: append only what arrived since the last one and trim the front, instead of redrawing every row.
+        var fresh = _monitor.LogSince(_lastShown, mac, tokenAndPollsToo: !hide);
+        _lastShown = Math.Max(upTo, fresh.Count > 0 ? fresh[^1].Sequence : 0);
+        if (fresh.Count == 0) return;
+        foreach (var l in fresh) LogLines.Add(l);
+        while (LogLines.Count > MaxShownLines) LogLines.RemoveAt(0);
         LogChanged?.Invoke();
     }
+
+    private const int MaxShownLines = 500;
+    private long _lastShown;
+    private byte? _shownMac;
+    private bool _shownHide, _rebuildLog = true;
 
     private void SyncNodes(IReadOnlyList<MstpNodeRow> rows)
     {

@@ -14,6 +14,9 @@
   </Window.DataContext>
   <!-- Scrolls instead of clipping when the screen is shorter than the layout needs -->
   <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+  <!-- MinHeight is the sum of what the page needs: the two header rows, the scan row (which wraps to two lines at this width), the device
+       list and object/properties area (their own minimums are 140 and 350), the Note box, the footer and the write log. Taller windows
+       use the extra room; shorter ones scroll instead of letting the footer draw over the grid. Raise it if a row is added. -->
   <Border Padding="20" MinHeight="960" Height="{Binding ActualHeight, ElementName=Scroller}">
   <Grid>
     <Grid.RowDefinitions>
@@ -152,30 +155,7 @@
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
-        <ItemsControl ItemsSource="{Binding NetworkFindings}" Margin="4,6,0,4">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate DataType="{x:Type app:FindingRow}">
-              <StackPanel Margin="0,4,0,6">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="{Binding Icon}" Width="22" FontWeight="Bold">
-                    <TextBlock.Style>
-                      <Style TargetType="TextBlock">
-                        <Setter Property="Foreground" Value="SteelBlue" />
-                        <Style.Triggers>
-                          <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
-                          <DataTrigger Binding="{Binding Severity}" Value="Problem"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
-                        </Style.Triggers>
-                      </Style>
-                    </TextBlock.Style>
-                  </TextBlock>
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                </StackPanel>
-                <TextBlock Text="{Binding Detail}" Margin="22,2,0,0" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding Help}" Margin="22,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
-              </StackPanel>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding NetworkFindings}" Margin="4,6,0,4" />
         </StackPanel>
         </ScrollViewer>
       </Expander>

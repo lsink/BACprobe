@@ -27,7 +27,7 @@
                 ToolTip="The USB-RS485 adapter's COM port. Device Manager shows which one it is." />
       <Button Content="Refresh" Padding="10,4" Margin="6,0,0,0" Command="{Binding RefreshPortsCommand}" />
       <TextBlock Text="Baud" VerticalAlignment="Center" Margin="16,0,0,0" />
-      <ComboBox ItemsSource="{Binding Bauds}" SelectedItem="{Binding SelectedBaud}" Width="150" Margin="8,0,0,0"
+      <ComboBox ItemsSource="{x:Static app:MstpViewModel.Bauds}" SelectedItem="{Binding SelectedBaud}" Width="150" Margin="8,0,0,0"
                 IsEnabled="{Binding IsIdle}" AutomationProperties.Name="Baud rate"
                 ToolTip="Auto-detect listens a few seconds at each common rate. Field trunks are mostly 38400 or 76800." />
       <Button Content="Start" Padding="22,4" Margin="16,0,0,0" Command="{Binding StartCommand}" />
@@ -81,30 +81,7 @@
         <TextBlock DockPanel.Dock="Top" Text="What looks wrong" FontWeight="SemiBold" Margin="0,0,0,4" />
         <Border BorderThickness="1" BorderBrush="#33808080" CornerRadius="4" Padding="8,4">
           <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding Findings}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="{x:Type app:FindingRow}">
-                  <StackPanel Margin="0,4,0,6">
-                    <StackPanel Orientation="Horizontal">
-                      <TextBlock Text="{Binding Icon}" Width="22" FontWeight="Bold">
-                        <TextBlock.Style>
-                          <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="SteelBlue" />
-                            <Style.Triggers>
-                              <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
-                              <DataTrigger Binding="{Binding Severity}" Value="Problem"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </TextBlock.Style>
-                      </TextBlock>
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding Detail}" Margin="22,2,0,0" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding Help}" Margin="22,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
-                  </StackPanel>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <ItemsControl ItemsSource="{Binding Findings}" />
           </ScrollViewer>
         </Border>
       </DockPanel>

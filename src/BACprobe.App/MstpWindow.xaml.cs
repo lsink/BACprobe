@@ -22,12 +22,12 @@ public partial class MstpWindow : Window
         };
         viewModel.PickSavePath = suggested =>
         {
-            var dlg = new SaveFileDialog { Title = "Save the MS/TP capture", FileName = suggested, Filter = "MS/TP capture (*.bin)|*.bin" };
+            var dlg = new SaveFileDialog { Title = "Save the MS/TP capture", FileName = suggested, Filter = "MS/TP capture (*.bin)|*.bin", DefaultExt = ".bin", AddExtension = true, OverwritePrompt = true };
             return dlg.ShowDialog(this) == true ? dlg.FileName : null;
         };
         viewModel.PickPcapPath = suggested =>
         {
-            var dlg = new SaveFileDialog { Title = "Export frames for Wireshark", FileName = suggested, Filter = "Packet capture (*.pcap)|*.pcap" };
+            var dlg = new SaveFileDialog { Title = "Export frames for Wireshark", FileName = suggested, Filter = "Packet capture (*.pcap)|*.pcap", DefaultExt = ".pcap", AddExtension = true, OverwritePrompt = true };
             return dlg.ShowDialog(this) == true ? dlg.FileName : null;
         };
         // Follow the newest frame, unless the tech paused to read.
