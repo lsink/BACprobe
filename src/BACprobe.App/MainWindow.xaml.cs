@@ -63,6 +63,7 @@ public partial class MainWindow : Window
             vm.ShowTrend = trend => new TrendWindow(trend) { Owner = this }.Show();
             vm.ShowLiveTrend = trend => new LiveTrendWindow(trend) { Owner = this }.Show();
             vm.ShowBbmdCheck = check => new BbmdCheckWindow(check) { Owner = this }.Show();
+            vm.ShowWatch = watch => new WatchWindow(watch) { Owner = this }.Show();
             vm.ShowCompare = compare => new CompareWindow(compare) { Owner = this }.Show();
             vm.ShowMstp = mstp => new MstpWindow(mstp) { Owner = this }.Show();
             vm.PickTrendFile = suggested =>

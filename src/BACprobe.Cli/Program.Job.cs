@@ -141,6 +141,14 @@ internal static partial class Program
             }
         }
 
+        if (job.AllWatch.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Watch list: {job.AllWatch.Count} point(s)");
+            foreach (var w in job.AllWatch)
+                Console.WriteLine($"  device {w.Device} \"{job.Devices.FirstOrDefault(x => x.Instance == w.Device)?.Name ?? "?"}\", {BacnetNames.ObjectLabel(w.Point)}: {w.Label}");
+        }
+
         if (opts.ContainsKey("log") || job.WriteLog.Count > 0)
         {
             Console.WriteLine();

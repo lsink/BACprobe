@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO.BACnet;
 using System.Text.Json;
 using BACprobe.Core.Browsing;
+using BACprobe.Core.Live;
 using BACprobe.Core.Writing;
 using Microsoft.Data.Sqlite;
 
@@ -13,7 +14,7 @@ namespace BACprobe.Core.Jobs;
 /// </summary>
 public static class JobFile
 {
-    public const int SchemaVersion = 5; // 2 added objects.priority_slots, 3 state_texts, 4 status_flags + reliability, 5 notes; older files still load
+    public const int SchemaVersion = 6; // 2 added objects.priority_slots, 3 state_texts, 4 status_flags + reliability, 5 notes, 6 watch list; older files still load
     public const string Extension = ".bacprobe";
     private const string AppMarker = "BACprobe";
 
@@ -33,6 +34,9 @@ public static class JobFile
         CREATE TABLE write_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, device_instance INTEGER NOT NULL,
             device_name TEXT, point TEXT, action TEXT, priority INTEGER, success INTEGER NOT NULL, result TEXT);
+        CREATE TABLE watch (
+            position INTEGER NOT NULL, device_instance INTEGER NOT NULL, object_type INTEGER NOT NULL, object_instance INTEGER NOT NULL,
+            label TEXT NOT NULL, PRIMARY KEY (device_instance, object_type, object_instance));
         CREATE TABLE notes (
             device_instance INTEGER NOT NULL, object_type INTEGER NOT NULL, object_instance INTEGER NOT NULL, text TEXT NOT NULL,
             PRIMARY KEY (device_instance, object_type, object_instance));
@@ -57,6 +61,8 @@ public static class JobFile
                 foreach (var d in job.Devices) WriteDevice(conn, tx, d);
                 foreach (var e in job.WriteLog) WriteLogRow(conn, tx, e);
                 foreach (var n in job.Notes ?? []) WriteNote(conn, tx, n);
+                var position = 0;
+                foreach (var w in job.AllWatch) WriteWatch(conn, tx, w, position++);
                 tx.Commit();
             }
             File.Move(temp, path, overwrite: true);
@@ -104,7 +110,8 @@ public static class JobFile
                 meta.GetValueOrDefault("name", ""), meta.GetValueOrDefault("notes", ""),
                 ParseTime(meta.GetValueOrDefault("created")), ParseTime(meta.GetValueOrDefault("saved")),
                 meta.GetValueOrDefault("bbmd"), meta.GetValueOrDefault("adapter"), meta.GetValueOrDefault("app_version", ""));
-            return new JobSnapshot(info, ReadDevices(conn, version), ReadLog(conn), version >= 5 ? ReadNotes(conn) : []);
+            return new JobSnapshot(info, ReadDevices(conn, version), ReadLog(conn),
+                version >= 5 ? ReadNotes(conn) : [], version >= 6 ? ReadWatch(conn) : []);
         }
         catch (SqliteException ex)
         {
@@ -175,6 +182,21 @@ public static class JobFile
             """,
             ("$t", e.Time.ToString("o", CultureInfo.InvariantCulture)), ("$d", (long)e.DeviceInstance), ("$dn", e.DeviceName),
             ("$p", e.Point), ("$a", e.Action), ("$pr", e.Priority), ("$s", e.Success ? 1 : 0), ("$r", e.Result));
+
+    private static void WriteWatch(SqliteConnection c, SqliteTransaction tx, WatchEntry w, int position) =>
+        Exec(c, tx, "INSERT OR REPLACE INTO watch(position, device_instance, object_type, object_instance, label) VALUES ($p, $d, $t, $i, $l)",
+            ("$p", position), ("$d", (long)w.Device), ("$t", (int)w.Point.type), ("$i", (long)w.Point.instance), ("$l", w.Label));
+
+    private static List<WatchEntry> ReadWatch(SqliteConnection c)
+    {
+        var list = new List<WatchEntry>();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT device_instance, object_type, object_instance, label FROM watch ORDER BY position";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new WatchEntry((uint)r.GetInt64(0), new BacnetObjectId((BacnetObjectTypes)r.GetInt32(1), (uint)r.GetInt64(2)), r.GetString(3)));
+        return list;
+    }
 
     // A device note is stored under object type -1, which no real object has.
     private static void WriteNote(SqliteConnection c, SqliteTransaction tx, NoteEntry n) =>

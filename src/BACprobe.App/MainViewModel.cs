@@ -503,6 +503,43 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Set by the window: opens the BBMD check.</summary>
     public Action<BbmdCheckViewModel> ShowBbmdCheck { get; set; } = _ => { };
 
+    // Watch list: points to keep an eye on across devices, saved with the job.
+    public WatchList Watch { get; } = new();
+    public string WatchButtonText => Watch.Count > 0 ? $"Watch list ({Watch.Count})..." : "Watch list...";
+
+    /// <summary>Set by the window: opens the watch list.</summary>
+    public Action<WatchViewModel> ShowWatch { get; set; } = _ => { };
+
+    private bool CanWatchSelected() => SelectedDevice is not null && SelectedObject is not null;
+
+    /// <summary>Put the selected point on the watch list (or take it off if it is already there).</summary>
+    [RelayCommand(CanExecute = nameof(CanWatchSelected))]
+    private void WatchSelected()
+    {
+        if (SelectedDevice is not { } d || SelectedObject is not { } o) return;
+        var id = o.Summary.Id;
+        var label = o.Summary.Name ?? o.Summary.Label;
+        if (Watch.Contains(d.Instance, id))
+        {
+            Watch.Remove(d.Instance, id);
+            Status = $"Took {label} off the watch list.";
+        }
+        else if (Watch.Add(d.Instance, id, label))
+            Status = $"Added {label} on device {d.Instance} to the watch list ({Watch.Count} point(s)). Open Watch list... to see them live.";
+        else
+            Status = $"The watch list is full ({WatchList.MaxEntries} points). Remove some first.";
+        OnPropertyChanged(nameof(WatchButtonText));
+    }
+
+    [RelayCommand]
+    private void OpenWatch()
+    {
+        ShowWatch(new WatchViewModel(Watch, _svc, Devices.ToDictionary(r => r.Instance, r => r.Device), Devices.ToDictionary(r => r.Instance, r => r.Name),
+            saved: (device, id) => _pointCache.TryGetValue(device, out var saved) ? saved.Objects.FirstOrDefault(s => s.Id == id) : null,
+            new LiveOptions(TimeSpan.FromSeconds(LiveIntervalSeconds), UseCov),
+            changed: () => OnPropertyChanged(nameof(WatchButtonText))));
+    }
+
     /// <summary>Set by the window: opens the device comparison.</summary>
     public Action<CompareViewModel> ShowCompare { get; set; } = _ => { };
 
@@ -718,6 +755,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedDeviceChanged(DeviceRow? value)
     {
+        WatchSelectedCommand.NotifyCanExecuteChanged();
         RefreshNoteTarget();
         _ = LoadObjectsAsync(value);
     }
@@ -897,6 +935,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedObjectChanged(ObjectRow? value)
     {
+        WatchSelectedCommand.NotifyCanExecuteChanged();
         RefreshNoteTarget();
         // A value typed for one point must never carry over to the next.
         WriteValueText = "";
@@ -1045,7 +1084,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 BbmdText.Trim().Length > 0 ? BbmdText.Trim() : null, SelectedAdapter?.Info.Cidr,
                 typeof(MainViewModel).Assembly.GetName().Version?.ToString() ?? "");
 
-            await Task.Run(() => JobFile.Save(path, new JobSnapshot(info, saved, writeLog, Notes.All)));
+            await Task.Run(() => JobFile.Save(path, new JobSnapshot(info, saved, writeLog, Notes.All, Watch.Items)));
             _persistedLog = writeLog;
             _sessionLogSaved = sessionLog.Count;
 
@@ -1087,6 +1126,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ResetBrowsing();
 
         Notes.Load(job.AllNotes);
+        Watch.Load(job.AllWatch);
+        OnPropertyChanged(nameof(WatchButtonText));
         RefreshNoteTarget();
         _baseline = job.Devices;
         _baselineName = job.Info.Name;

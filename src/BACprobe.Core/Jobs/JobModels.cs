@@ -2,6 +2,7 @@ using System.IO.BACnet;
 using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Export;
+using BACprobe.Core.Live;
 using BACprobe.Core.Writing;
 
 namespace BACprobe.Core.Jobs;
@@ -68,10 +69,13 @@ public sealed record SavedDevice(
 
 /// <summary>Everything in a job file.</summary>
 public sealed record JobSnapshot(JobInfo Info, IReadOnlyList<SavedDevice> Devices, IReadOnlyList<WriteLogEntry> WriteLog,
-    IReadOnlyList<NoteEntry>? Notes = null)
+    IReadOnlyList<NoteEntry>? Notes = null, IReadOnlyList<WatchEntry>? Watch = null)
 {
     /// <summary>The notes, never null (files from before notes existed have none).</summary>
     public IReadOnlyList<NoteEntry> AllNotes => Notes ?? [];
+
+    /// <summary>The watch list, never null (files from before watch lists existed have none).</summary>
+    public IReadOnlyList<WatchEntry> AllWatch => Watch ?? [];
 }
 
 /// <summary>A job file that cannot be used. The message already says what is likely wrong and what to do.</summary>
