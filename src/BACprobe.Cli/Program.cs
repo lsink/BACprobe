@@ -24,6 +24,7 @@ internal static partial class Program
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe routers   [--adapter <ip>] [--wait <seconds>]
           bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]
+          bacprobe lesson    [<name>]
           bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400|auto] [--seconds 30] [--frames] [--record <capture.bin>] [--pcap <frames.pcap> [--force]]
           bacprobe mstp-monitor --make-sample <capture.bin> [--force]
           bacprobe mstp-discover --port <COMn> [--baud 38400|auto] [--mac <0-127>] [--survey 15] [--wait 10] [--low <n> --high <n>] [--yes]
@@ -57,6 +58,8 @@ internal static partial class Program
                    too noisy or too quiet, the adapter's latency timer is over 2 ms, or the MAC is taken; it picks the lowest free master address
                    (or use --mac), uses Max_Master 127, and asks you to type JOIN (or --yes). Built on the library's own MS/TP master; only tested
                    against a simulated trunk, never a real one.
+        lesson     Short plain-English lessons (BBMDs, the MS/TP token, wiring, priorities ...). A finding that has one prints
+                   "Lesson: bacprobe lesson <name>" under its next step. No name lists them all.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
                    (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.
@@ -119,6 +122,7 @@ internal static partial class Program
                 "routers" => await RoutersAsync(opts),
                 "bbmd" => await BbmdCheckAsync(opts),
                 "compare" => await CompareAsync(opts),
+                "lesson" => Lesson(args.Skip(1).ToArray()),
                 "mstp-monitor" => await MstpMonitorAsync(opts),
                 "mstp-discover" => await MstpDiscoverAsync(opts),
                 "export" => await ExportAsync(opts),

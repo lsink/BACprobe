@@ -10,6 +10,8 @@ public partial class MainWindow : Window
 {
     private bool _closeApproved;
 
+    private void OnOpenLessons(object sender, RoutedEventArgs e) => LessonWindow.Open();
+
     public MainWindow()
     {
         InitializeComponent();

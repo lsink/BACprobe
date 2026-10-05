@@ -7,6 +7,7 @@ using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 using BACprobe.Core.Export;
 using BACprobe.Core.Jobs;
+using BACprobe.Core.Learning;
 using BACprobe.Core.Live;
 using BACprobe.Core.Networking;
 using BACprobe.Core.Writing;
@@ -41,6 +42,10 @@ public sealed class FindingRow(NetworkFinding f)
     public string Title { get; } = f.Title;
     public string Detail { get; } = f.Detail;
     public string Help { get; } = $"Likely cause: {f.LikelyCause}{Environment.NewLine}Next step: {f.NextStep}";
+    private readonly Lesson? _lesson = Lessons.ForFinding(f);
+    public string? LessonId => _lesson?.Id;
+    public string LessonText => _lesson is null ? "" : $"Learn more: {_lesson.Title}";
+    public Visibility LessonVisibility => _lesson is null ? Visibility.Collapsed : Visibility.Visible;
 }
 
 public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
