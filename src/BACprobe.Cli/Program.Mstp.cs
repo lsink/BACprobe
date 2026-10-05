@@ -46,11 +46,14 @@ internal static partial class Program
 
         var analyzer = new MstpBusAnalyzer(baud, Stopwatch.Frequency);
         var parser = new MstpFrameParser();
+        var pcapFrames = new List<(double, MstpFrame)>();
         void Take(ReadOnlySpan<byte> bytes, long ts)
         {
             foreach (var item in parser.Feed(bytes, ts))
             {
                 analyzer.Add(item);
+                if (item is MstpFrame kept && pcapFrames.Count < MstpMonitor.MaxExportFrames)
+                    pcapFrames.Add(((double)(kept.Timestamp - _t0) / Stopwatch.Frequency, kept));
                 if (!showFrames) continue;
                 Console.WriteLine(item switch
                 {
@@ -120,6 +123,17 @@ internal static partial class Program
         analyzer.DiscardedBytes = parser.DiscardedBytes;
         analyzer.TimingKnown = !opts.ContainsKey("replay");
         PrintMstpReport(analyzer);
+
+        if (opts.TryGetValue("pcap", out var pcapPath) && pcapPath is not null)
+        {
+            if (pcapFrames.Count == 0) Console.WriteLine("\nNo good frames to write to the pcap file.");
+            else if (File.Exists(pcapPath) && !opts.ContainsKey("force")) return Fail($"\n{pcapPath} already exists. Use --force to overwrite it.");
+            else
+            {
+                using (var file = File.Create(pcapPath)) MstpPcap.Write(file, pcapFrames, DateTimeOffset.Now);
+                Console.WriteLine($"\nWrote {pcapFrames.Count} frames to {pcapPath}. Open it in Wireshark. Damaged frames are not included.");
+            }
+        }
         return analyzer.Frames == 0 ? 3 : 0;
     }
 
@@ -177,9 +191,9 @@ internal static partial class Program
         if (a.Nodes.Count > 0)
         {
             Console.WriteLine();
-            Console.WriteLine($"{"MAC",4} {"Role",-8} {"Frames",7} {"Token in",9} {"Missed",7} {"Polls",6} {"Data",6}");
+            Console.WriteLine($"{"MAC",4} {"Role",-8} {"Frames",7} {"Token in",9} {"Missed",7} {"Polls",6} {"Data",6} {"Bad turns",10}");
             foreach (var n in a.Nodes)
-                Console.WriteLine($"{n.Mac,4} {(n.IsMaster ? "master" : "slave?"),-8} {n.FramesSent,7} {n.TokensReceived,9} {n.TokenNotTaken,7} {n.PollsSent,6} {n.DataFramesSent,6}");
+                Console.WriteLine($"{n.Mac,4} {(n.IsMaster ? "master" : "slave?"),-8} {n.FramesSent,7} {n.TokensReceived,9} {n.TokenNotTaken,7} {n.PollsSent,6} {n.DataFramesSent,6} {n.TurnErrors,10}");
             Console.WriteLine("(\"slave?\" means the node only ever answered: a slave, or a master that never held the token while we listened.)");
         }
 

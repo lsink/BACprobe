@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:BACprobe.App"
         xmlns:mstp="clr-namespace:BACprobe.Core.Mstp;assembly=BACprobe.Core"
-        Title="MS/TP monitor" Icon="Assets/app.ico" Width="1180" Height="860" MinWidth="900" MinHeight="620"
+        Title="MS/TP monitor" Icon="Assets/app.ico" Width="1440" Height="860" MinWidth="1000" MinHeight="620"
         WindowStartupLocation="CenterOwner">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BoolToVis" />
@@ -36,6 +36,8 @@
               ToolTip="Analyse a capture saved earlier (here or with bacprobe mstp-monitor --record). No adapter needed." />
       <Button Content="Save capture..." Padding="12,4" Margin="6,0,0,0" Command="{Binding SaveCaptureCommand}"
               ToolTip="Keep what was just heard, to compare later or send to someone." />
+      <Button Content="Export for Wireshark..." Padding="12,4" Margin="6,0,0,0" Command="{Binding ExportPcapCommand}"
+              ToolTip="Save the frames heard as a .pcap file you can open in Wireshark (link type BACnet MS/TP). Damaged frames are not included." />
       <Button Content="Demo" Padding="12,4" Margin="6,0,0,0" Command="{Binding LoadDemoCommand}"
               ToolTip="Show a made-up trunk with a dead node, a low Max Master and some noise, to see what the monitor reports." />
     </WrapPanel>
@@ -51,7 +53,7 @@
     <!-- Who is on the trunk, and what looks wrong -->
     <Grid Grid.Row="4">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="1.15*" />
+        <ColumnDefinition Width="1.7*" />
         <ColumnDefinition Width="12" />
         <ColumnDefinition Width="1*" />
       </Grid.ColumnDefinitions>
@@ -62,13 +64,15 @@
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal" MouseDoubleClick="NodeGrid_DoubleClick">
           <DataGrid.Columns>
             <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="60" />
-            <DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="75" />
-            <DataGridTextColumn Header="Frames" Binding="{Binding FramesSent}" Width="75" />
+            <DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="80" />
+            <DataGridTextColumn Header="Frames" Binding="{Binding FramesSent}" Width="80" />
             <DataGridTextColumn Header="Token in" Binding="{Binding TokensReceived}" Width="85" />
-            <DataGridTextColumn Header="Missed" Binding="{Binding TokenNotTaken}" Width="75" />
-            <DataGridTextColumn Header="Polls" Binding="{Binding PollsSent}" Width="65" />
-            <DataGridTextColumn Header="Data" Binding="{Binding DataFrames}" Width="65" />
-            <DataGridTextColumn Header="Token loop" Binding="{Binding AverageLoop}" Width="*" />
+            <DataGridTextColumn Header="Missed" Binding="{Binding TokenNotTaken}" Width="80" />
+            <DataGridTextColumn Header="Polls" Binding="{Binding PollsSent}" Width="70" />
+            <DataGridTextColumn Header="Data" Binding="{Binding DataFrames}" Width="70" />
+            <DataGridTextColumn Header="Bad turns" Binding="{Binding BadTurns}" Width="95" />
+            <DataGridTextColumn Header="Token loop" Binding="{Binding AverageLoop}" Width="100" />
+            <DataGridTextColumn Header="Pickup avg / max" Binding="{Binding Pickup}" Width="*" MinWidth="130" />
           </DataGrid.Columns>
         </DataGrid>
       </DockPanel>

@@ -25,6 +25,11 @@ public partial class MstpWindow : Window
             var dlg = new SaveFileDialog { Title = "Save the MS/TP capture", FileName = suggested, Filter = "MS/TP capture (*.bin)|*.bin" };
             return dlg.ShowDialog(this) == true ? dlg.FileName : null;
         };
+        viewModel.PickPcapPath = suggested =>
+        {
+            var dlg = new SaveFileDialog { Title = "Export frames for Wireshark", FileName = suggested, Filter = "Packet capture (*.pcap)|*.pcap" };
+            return dlg.ShowDialog(this) == true ? dlg.FileName : null;
+        };
         // Follow the newest frame, unless the tech paused to read.
         viewModel.LogChanged += () =>
         {

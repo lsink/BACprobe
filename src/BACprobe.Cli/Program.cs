@@ -24,7 +24,7 @@ internal static partial class Program
           bacprobe export    (--device <instance> | --all) [--format csv|xlsx|ede] [--out <file>] [--force] [--bbmd <ip>]
           bacprobe routers   [--adapter <ip>] [--wait <seconds>]
           bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]
-          bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400|auto] [--seconds 30] [--frames] [--record <capture.bin>]
+          bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400|auto] [--seconds 30] [--frames] [--record <capture.bin>] [--pcap <frames.pcap> [--force]]
           bacprobe mstp-monitor --make-sample <capture.bin> [--force]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
@@ -46,7 +46,7 @@ internal static partial class Program
         mstp-monitor  Listen to an MS/TP trunk through a USB-RS485 adapter WITHOUT transmitting. Reports the masters seen, how busy the
                    trunk is, the token loop time, damaged frames, nodes that do not take the token, and Max Master set too low, each with
                    a likely cause and next step. --frames prints every frame in plain English; --record saves the raw bytes and --replay
-                   analyses a saved capture later (no adapter needed). Common baud rates here: 38400 and 76800.
+                   analyses a saved capture later (no adapter needed). --pcap writes the good frames as a Wireshark file. Common baud rates here: 38400 and 76800.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
                    (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.

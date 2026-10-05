@@ -2,8 +2,9 @@ namespace BACprobe.Core.Mstp;
 
 /// <summary>
 /// A made-up MS/TP capture for trying the monitor without hardware (the MS/TP counterpart of <c>bacprobe simulate</c>).
-/// Masters 1, 2, 3 and 7 pass the token round; MAC 7 is dead (never takes it), a little noise is thrown in,
-/// and Max Master is too low for MAC 9, which sits on the trunk but is never polled.
+/// Masters 1, 2, 3, 5 and 7 pass the token round; MAC 7 is dead (never takes it), MAC 5 has a bad connection (its
+/// transmissions often arrive damaged), a little noise is thrown in, and Max Master is too low for MAC 9, which sits
+/// on the trunk but is never polled.
 /// </summary>
 public static class MstpSampleCapture
 {
@@ -26,6 +27,10 @@ public static class MstpSampleCapture
             bytes.AddRange(Token(2, 3));
             bytes.AddRange(Token(3, 7));   // MAC 7 never answers...
             bytes.AddRange(Token(3, 1));   // ...so MAC 3 gives up and passes it on
+            bytes.AddRange(Token(1, 5));   // MAC 5 has a bad drop: two turns in three, what it sends arrives damaged
+            var fromFive = Token(5, 1);
+            if (i % 3 != 0) fromFive[3] ^= 0x08;
+            bytes.AddRange(fromFive);
             if (rng.Next(12) == 0)         // a burst of line noise now and then
                 bytes.AddRange(Enumerable.Range(0, rng.Next(2, 6)).Select(_ => (byte)rng.Next(256)));
             if (rng.Next(25) == 0)         // and the odd damaged frame

@@ -214,9 +214,36 @@ public sealed partial class MstpViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Set by the window: Save dialog for a pcap file (suggested name in); null if cancelled.</summary>
+    public Func<string, string?> PickPcapPath { get; set; } = _ => null;
+
+    private bool CanExportPcap() => _monitor is not null && !IsDetecting;
+
+    [RelayCommand(CanExecute = nameof(CanExportPcap))]
+    private void ExportPcap()
+    {
+        if (_monitor is null) return;
+        if (_monitor.ExportableFrames == 0)
+        {
+            Status = "No frames to export yet. Likely cause: nothing valid has been heard. Next step: start a listen or open a capture first.";
+            return;
+        }
+        if (PickPcapPath($"mstp-{DateTime.Now:yyyyMMdd-HHmmss}.pcap") is not { } path) return;
+        try
+        {
+            var n = _monitor.ExportPcap(path);
+            Status = $"Saved {n} frames to {path}. Open it in Wireshark (it is a BACnet MS/TP capture). Damaged frames are not included.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Status = $"Could not save: {ex.Message} Likely cause: the folder is read-only or the file is open in Wireshark. Next step: pick another place or close it.";
+        }
+    }
+
     private void BeginSession(MstpMonitor monitor)
     {
         _monitor = monitor;
+        ExportPcapCommand.NotifyCanExecuteChanged();
         Nodes.Clear();
         Findings.Clear();
         LogLines.Clear();

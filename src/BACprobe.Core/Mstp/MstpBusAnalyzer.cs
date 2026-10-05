@@ -28,6 +28,14 @@ public sealed class MstpNodeStats(byte mac)
     public int LoopSamples { get; internal set; }
     internal long LoopTicksTotal { get; set; }
     public long LoopTicksMax { get; internal set; }
+
+    /// <summary>Damaged frames that arrived right after this node was given its turn (token or poll): its own transmissions are the likely casualties.</summary>
+    public int TurnErrors { get; internal set; }
+
+    /// <summary>How long this node took to start transmitting after it was passed the token.</summary>
+    public int PickupSamples { get; internal set; }
+    internal long PickupTicksTotal { get; set; }
+    public long PickupTicksMax { get; internal set; }
 }
 
 /// <summary>
@@ -37,12 +45,16 @@ public sealed class MstpNodeStats(byte mac)
 public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
 {
     private readonly Dictionary<byte, MstpNodeStats> _nodes = [];
-    private (byte From, byte To)? _pendingPass;
+    private (byte From, byte To, long At)? _pendingPass;
+    private byte? _turnOf; // whose turn the last frame handed out (token or poll), until something else is heard
     private long _first = -1, _last = -1, _wireBytes;
     private long _loopTicksTotal;
     private int _loopSamples;
 
     public int Baud { get; } = baud;
+
+    /// <summary>Average time to start using the token above which a node is called slow. The standard skips a master after 20 ms of silence.</summary>
+    public const double SlowPickupMs = 15;
 
     /// <summary>
     /// False for a replayed raw capture: it has no real clock, so bus load and token loop time would be made up
@@ -79,6 +91,11 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
     public void AddError(MstpError e)
     {
         Touch(e.Timestamp);
+        if (_turnOf is { } turn)
+        {
+            Node(turn).TurnErrors++; // damage right after this node's turn: probably its own transmission
+            _turnOf = null;          // one burst of noise counts once
+        }
         switch (e.Kind)
         {
             case MstpErrorKind.HeaderCrc: HeaderCrcErrors++; break;
@@ -96,11 +113,21 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
         var src = Node(f.Source);
         src.FramesSent++;
         src.LastSeen = f.Timestamp;
+        _turnOf = f.Type is (byte)MstpFrameType.Token or (byte)MstpFrameType.PollForMaster && f.Destination != MstpFrame.Broadcast
+            ? f.Destination : null;
 
         // Did the node that was just passed the token take it?
         if (_pendingPass is { } pass)
         {
-            if (f.Source == pass.To) Node(pass.To).TokenTaken++;
+            if (f.Source == pass.To)
+            {
+                var taker = Node(pass.To);
+                taker.TokenTaken++;
+                var pickup = f.Timestamp - pass.At;
+                taker.PickupSamples++;
+                taker.PickupTicksTotal += pickup;
+                taker.PickupTicksMax = Math.Max(taker.PickupTicksMax, pickup);
+            }
             else if (f.Source == pass.From) Node(pass.To).TokenNotTaken++; // the passer is talking again: nobody took it
             _pendingPass = null;
         }
@@ -123,7 +150,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
                         _loopSamples++;
                     }
                     dst.LastTokenArrival = f.Timestamp;
-                    _pendingPass = (f.Source, f.Destination);
+                    _pendingPass = (f.Source, f.Destination, f.Timestamp);
                 }
                 break;
             case (byte)MstpFrameType.PollForMaster:
@@ -194,12 +221,39 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
                     $"It was passed the token {n.TokenNotTaken} times and never used it.",
                     "The node is off, wired badly, set to the wrong baud rate, or has a MAC that clashes with another device.",
                     $"Check power and wiring at MAC {n.Mac}, its baud rate, and that no other device has the same MAC."));
-            else if ((double)n.TokenNotTaken / passes >= 0.1)
+            else if ((double)n.TokenNotTaken / passes >= 0.1 && n.TurnErrors * 2 < n.TokenNotTaken) // damage, reported below, explains the rest
                 list.Add(new(FindingSeverity.Warning, $"MAC {n.Mac} often misses the token",
                     $"It did not take the token {n.TokenNotTaken} of {passes} times.",
                     "Marginal wiring or noise near that node, or a slow device that is busy.",
                     $"Check the wiring and connections at MAC {n.Mac}."));
         }
+
+        // Damage that keeps landing on one node's turn points at that node, not at the trunk in general.
+        foreach (var n in Nodes.Where(n => n.TurnErrors >= 3))
+        {
+            var turns = Math.Max(1, n.TokensReceived + (n.PollReplies > 0 ? n.PollReplies : 0));
+            var share = (double)n.TurnErrors / turns;
+            if (share < 0.2) continue;
+            list.Add(new(share >= 0.5 ? FindingSeverity.Problem : FindingSeverity.Warning,
+                $"MAC {n.Mac}'s transmissions arrive damaged",
+                $"{n.TurnErrors} damaged frames came straight after MAC {n.Mac} was given its turn ({share:P0} of its turns).",
+                "Two devices set to the same MAC answering at once, a bad connection or missing bias or termination at that node, or A and B swapped at that node. " +
+                "Damage only at one node usually means that node or its drop, not the whole trunk.",
+                $"Unplug MAC {n.Mac} and listen again: if the damage stops, check its MAC address is unique and look at its wiring (A to A, B to B, shield). " +
+                "If the damage stays, the problem is elsewhere on the trunk."));
+        }
+
+        if (TimingKnown)
+            foreach (var n in Nodes.Where(n => n.PickupSamples >= 5))
+            {
+                var avgMs = (double)n.PickupTicksTotal / n.PickupSamples / ticksPerSecond * 1000;
+                if (avgMs < SlowPickupMs) continue;
+                list.Add(new(FindingSeverity.Warning, $"MAC {n.Mac} is slow to use the token",
+                    $"It takes about {avgMs:0} ms to start transmitting after it is passed the token (slowest {(double)n.PickupTicksMax / ticksPerSecond * 1000:0} ms). " +
+                    "A master that waits 20 ms or more is assumed dead and skipped.",
+                    "A busy or underpowered controller, a slow serial driver, or a USB adapter with a long latency timer on the monitoring PC.",
+                    $"If this is the monitoring PC's adapter, check its latency timer. Otherwise look at how loaded MAC {n.Mac} is and whether it can run at this baud rate."));
+            }
 
         var masters = Masters;
         if (HighestPolled >= 0)
