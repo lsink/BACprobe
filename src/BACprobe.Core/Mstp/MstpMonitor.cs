@@ -17,7 +17,7 @@ public sealed record MstpNodeRow(byte Mac, string Role, int FramesSent, int Toke
 /// <summary>Everything the window shows, copied under the lock so the screen never reads a half-updated analyzer.</summary>
 public sealed record MstpSnapshot(
     int Frames, int Errors, double ElapsedSeconds, double Utilisation, TimeSpan? AverageTokenLoop, bool TimingKnown, int Baud,
-    IReadOnlyList<MstpNodeRow> Nodes, IReadOnlyList<NetworkFinding> Findings, long TotalBytes)
+    IReadOnlyList<MstpNodeRow> Nodes, IReadOnlyList<NetworkFinding> Findings, long TotalBytes, int HighestPolled = -1)
 {
     public string Summary
     {
@@ -143,7 +143,7 @@ public sealed class MstpMonitor
                     ? $"{(double)n.PickupTicksTotal / n.PickupSamples / _ticksPerSecond * 1000:0.#} / {(double)n.PickupTicksMax / _ticksPerSecond * 1000:0.#} ms" : "-",
                 n.TurnErrors)).ToList();
             return new MstpSnapshot(_analyzer.Frames, _analyzer.Errors, _analyzer.ElapsedSeconds, _analyzer.Utilisation,
-                _analyzer.AverageTokenLoop, _analyzer.TimingKnown, _analyzer.Baud, nodes, _analyzer.Findings(), _bytes);
+                _analyzer.AverageTokenLoop, _analyzer.TimingKnown, _analyzer.Baud, nodes, _analyzer.Findings(), _bytes, _analyzer.HighestPolled);
         }
     }
 

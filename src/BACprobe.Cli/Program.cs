@@ -26,6 +26,8 @@ internal static partial class Program
           bacprobe bbmd      <ip[:port]> [--adapter <ip>] [--no-peers]
           bacprobe mstp-monitor (--port <COMn> | --list | --replay <capture.bin>) [--baud 38400|auto] [--seconds 30] [--frames] [--record <capture.bin>] [--pcap <frames.pcap> [--force]]
           bacprobe mstp-monitor --make-sample <capture.bin> [--force]
+          bacprobe mstp-discover --port <COMn> [--baud 38400|auto] [--mac <0-127>] [--survey 15] [--wait 10] [--low <n> --high <n>] [--yes]
+          (objects, read, write, release, watch, trend, compare, routers and export also accept --mstp <COMn> [--baud ..] [--mac ..] [--yes] to connect through an MS/TP trunk)
           bacprobe compare   --device <a> --with <b> [--object <type:n>] [--all] [--inputs]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
@@ -51,6 +53,10 @@ internal static partial class Program
         compare    Line two devices up point by point and print what differs (a setpoint someone changed, a point missing on one, a point
                    named differently). Live inputs differ by nature and are left out unless --inputs. --object av:1 compares that one object's
                    properties on both. --all also lists what is the same. Exit code 5 means differences were found. Reads only.
+        mstp-discover  JOIN an MS/TP trunk as a master (this TRANSMITS) and list the devices on it. It listens first and refuses if the trunk is
+                   too noisy or too quiet, the adapter's latency timer is over 2 ms, or the MAC is taken; it picks the lowest free master address
+                   (or use --mac), uses Max_Master 127, and asks you to type JOIN (or --yes). Built on the library's own MS/TP master; only tested
+                   against a simulated trunk, never a real one.
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
                    (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.
@@ -114,6 +120,7 @@ internal static partial class Program
                 "bbmd" => await BbmdCheckAsync(opts),
                 "compare" => await CompareAsync(opts),
                 "mstp-monitor" => await MstpMonitorAsync(opts),
+                "mstp-discover" => await MstpDiscoverAsync(opts),
                 "export" => await ExportAsync(opts),
                 "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),

@@ -98,6 +98,7 @@ internal static partial class Program
     /// <summary>Pick the adapter, run pre-flight, open the BACnet socket and (if asked) register with a BBMD.</summary>
     private static async Task<(DiscoveryService?, string?)> OpenSessionAsync(Dictionary<string, string?> opts)
     {
+        if (opts.ContainsKey("mstp")) return await OpenMstpSessionAsync(opts); // through an MS/TP trunk instead of an IP adapter
         var adapter = PickAdapter(opts);
         var bbmd = ParseBbmd(opts);
         var results = Core.Networking.Preflight.Run(adapter);

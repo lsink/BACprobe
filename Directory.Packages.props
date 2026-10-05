@@ -5,6 +5,8 @@
   <ItemGroup>
     <!-- BACnet protocol stack (MIT): https://github.com/ela-compil/BACnet -->
     <PackageVersion Include="BACnet" Version="4.0.0" />
+    <!-- Serial-port transport for the library's MS/TP master (MIT; https://github.com/ela-compil/BACnet, Serial project) -->
+    <PackageVersion Include="BACnet.Serial" Version="4.0.0" />
     <!-- MVVM helpers for the WPF app (MIT) -->
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <!-- Excel (.xlsx) export (MIT) -->

@@ -66,8 +66,8 @@ public sealed class MstpPortCapture : IDisposable
     }
 
     public static string OpenErrorText(string port, string message) =>
-        $"Could not open {port}: {message} Likely cause: another program (a BACnet tool or terminal) has the port open, or the adapter was unplugged. " +
-        "Next step: close the other program, or pick another port.";
+        $"Could not open {port}: {message} Likely cause: the port name is wrong, another program (a BACnet tool or terminal) has the port open, or the adapter was unplugged. " +
+        "Next step: run 'bacprobe mstp-monitor --list' to see the ports, close the other program, or pick another port.";
 
     public void Stop()
     {
