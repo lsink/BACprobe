@@ -32,6 +32,7 @@ internal static partial class Program
           bacprobe compare   --device <a> --with <b> [--object <type:n>] [--all] [--inputs]
           bacprobe alarms    [--device <instance>] [--wait <seconds>]
           bacprobe alarms    --device <instance> --ack <type:n> [--yes]
+          bacprobe alarms    --listen [--device <instance>] [--minutes 10] [--yes]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
           bacprobe who-has   ("<exact point name>" | <type:n>) [--low <n> --high <n>] [--wait <seconds>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
@@ -65,7 +66,8 @@ internal static partial class Program
         alarms     List every device's active and unacknowledged alarms (GetEventInformation; for a device without it, the points
                    whose status says in alarm or fault), worst first, each with when it started, what is not acknowledged, and a
                    likely cause and next step. Exit code 5 means alarms were found. --ack acknowledges one point's alarm after you
-                   confirm; it changes nothing on the point, and is logged like a write.
+                   confirm; it changes nothing on the point, and is logged like a write. --listen adds BACprobe to each device's alarm
+                   recipient lists (asks first), prints alarms the moment they happen, and takes itself off again when it stops.
         mstp-discover  JOIN an MS/TP trunk as a master (this TRANSMITS) and list the devices on it. It listens first and refuses if the trunk is
                    too noisy or too quiet, the adapter's latency timer is over 2 ms, or the MAC is taken; it picks the lowest free master address
                    (or use --mac), uses Max_Master 127, and asks you to type JOIN (or --yes). Built on the library's own MS/TP master; only tested

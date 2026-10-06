@@ -31,6 +31,17 @@ public sealed class AlarmRow(ActiveEvent e)
     };
 }
 
+/// <summary>Getting alarms pushed live: add BACprobe to the devices' recipient lists, hear notifications, take it off again.</summary>
+public interface IAlarmLiveLink
+{
+    /// <summary>Asks the tech first. Returns whether BACprobe is now listening, and what to tell them.</summary>
+    Task<(bool Listening, string Message)> StartAsync(IReadOnlyList<DiscoveredDevice> devices);
+
+    Task<string> StopAsync();
+
+    event Action<AlarmNotification>? Notified;
+}
+
 /// <summary>
 /// Every device's active and unacknowledged alarms, worst first, each explained. Acknowledging goes through the main window's
 /// confirmation and the write log, and is refused in read-only mode. Reads alarms live; a saved job does not hold them.
@@ -45,15 +56,66 @@ public sealed partial class AlarmsViewModel : ObservableObject, IDisposable
     private List<DeviceAlarms> _results = [];
     private CancellationTokenSource? _cts;
 
+    private readonly IAlarmLiveLink? _live;
+
     public AlarmsViewModel(IReadOnlyList<DiscoveredDevice> devices, AlarmReader reader, Func<AlarmAckRequest, Task<WriteOutcome>> acknowledge,
-        Func<uint, BacnetObjectId, Task> goTo, Func<bool> readOnly)
+        Func<uint, BacnetObjectId, Task> goTo, Func<bool> readOnly, IAlarmLiveLink? live = null)
     {
         _devices = devices;
         _reader = reader;
         _acknowledge = acknowledge;
         _goTo = goTo;
         _readOnly = readOnly;
+        _live = live;
+        if (_live is not null) _live.Notified += OnNotified;
     }
+
+    /// <summary>Alarms as they arrived while live, newest first (at most 50).</summary>
+    public ObservableCollection<string> LiveLog { get; } = [];
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleLiveCommand))]
+    private bool _isLive;
+
+    public string LiveButtonText => IsLive ? "Stop live" : "Live...";
+    partial void OnIsLiveChanged(bool value) => OnPropertyChanged(nameof(LiveButtonText));
+
+    private bool CanToggleLive() => _live is not null && !IsBusy && (IsLive || !_readOnly());
+
+    /// <summary>Start: the device sends its alarms here as they happen (asks first). Stop: BACprobe takes itself off the lists.</summary>
+    [RelayCommand(CanExecute = nameof(CanToggleLive))]
+    private async Task ToggleLiveAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            if (IsLive)
+            {
+                Status = await _live!.StopAsync();
+                IsLive = false;
+            }
+            else
+            {
+                Status = "Reading the devices' notification classes...";
+                var (listening, message) = await _live!.StartAsync(_devices);
+                IsLive = listening;
+                Status = message;
+            }
+        }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>An alarm arrived: note it, and read that device's list again so the rows show what it says now.</summary>
+    private void OnNotified(AlarmNotification n) => UiThread.Post(async () =>
+    {
+        LiveLog.Insert(0, n.Text);
+        while (LiveLog.Count > 50) LiveLog.RemoveAt(LiveLog.Count - 1);
+        Status = $"Live: {n.Text}";
+        var device = _devices.FirstOrDefault(d => d.InstanceId == n.DeviceInstance);
+        if (device is null) return;
+        try { Merge(await _reader.ReadAsync(device)); }
+        catch (Exception) { /* the next notification or Refresh tries again */ }
+    });
 
     public ObservableCollection<AlarmRow> Rows { get; } = [];
     public ObservableCollection<FindingRow> Findings { get; } = [];
@@ -64,7 +126,7 @@ public sealed partial class AlarmsViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _detail = "Select an alarm to see what it means and what to do.";
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RefreshCommand), nameof(AcknowledgeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand), nameof(AcknowledgeCommand), nameof(ToggleLiveCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -181,6 +243,11 @@ public sealed partial class AlarmsViewModel : ObservableObject, IDisposable
     /// <summary>The window closed: stop asking devices.</summary>
     public void Dispose()
     {
+        if (_live is not null)
+        {
+            _live.Notified -= OnNotified;
+            if (IsLive) _ = _live.StopAsync(); // also tracked: if this cannot finish, leaving the app offers it again
+        }
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = null;

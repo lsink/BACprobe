@@ -619,7 +619,72 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
         ShowAlarms(new AlarmsViewModel([.. Devices.Select(d => d.Device)], _svc.CreateAlarmReader(), AcknowledgeAlarmAsync, GoToPointAsync,
-            readOnly: () => ReadOnlyMode));
+            readOnly: () => ReadOnlyMode, live: _writer is null ? null : new AlarmLiveSession(_svc, _writer, r => ConfirmAlarmListen(r))));
+    }
+
+    /// <summary>Set by the window: confirm adding BACprobe to these devices' alarm recipient lists.</summary>
+    public Func<IReadOnlyList<AlarmListenRequest>, bool> ConfirmAlarmListen { get; set; } = _ => false;
+
+    /// <summary>
+    /// Live alarms over this connection: find each device's notification classes, confirm once, add BACprobe to them, pass notifications
+    /// on, and take BACprobe off again. The additions are tracked like overrides, so leaving the app offers to undo any left behind.
+    /// </summary>
+    private sealed class AlarmLiveSession(DiscoveryService svc, DeviceWriter writer, Func<IReadOnlyList<AlarmListenRequest>, bool> confirm)
+        : IAlarmLiveLink
+    {
+        private readonly List<AlarmListenRequest> _active = [];
+
+        public event Action<AlarmNotification>? Notified;
+
+        private void Relay(AlarmNotification n) => Notified?.Invoke(n);
+
+        public async Task<(bool Listening, string Message)> StartAsync(IReadOnlyList<DiscoveredDevice> devices)
+        {
+            if (svc.OwnRecipient is not { } me) return (false, "Live alarms work over BACnet/IP only for now. Use Refresh instead.");
+            var requests = new List<AlarmListenRequest>();
+            foreach (var d in devices)
+            {
+                try
+                {
+                    var classes = await svc.ReadNotificationClassesAsync(d);
+                    if (classes.Count > 0) requests.Add(new AlarmListenRequest(d, d.ObjectName ?? $"device {d.InstanceId}", classes, me));
+                }
+                catch (Exception) { /* a device that will not list its objects cannot be listened to; Refresh still covers it */ }
+            }
+            if (requests.Count == 0)
+                return (false, "No device here has notification classes, so none can send its alarms to BACprobe. Likely cause: they do not " +
+                               "report alarms themselves. Next step: use Refresh.");
+            if (!confirm(requests)) return (false, "Cancelled. Nothing was changed.");
+
+            svc.AlarmNotified += Relay;
+            var problems = new List<string>();
+            foreach (var r in requests)
+            {
+                var outcome = await writer.ListenForAlarmsAsync(r);
+                if (outcome.Success) _active.Add(r);
+                else problems.Add($"device {r.Device.InstanceId}: {outcome.Message.Split('\n')[0]}");
+            }
+            if (_active.Count == 0)
+            {
+                svc.AlarmNotified -= Relay;
+                return (false, "No device accepted BACprobe as a recipient: " + string.Join("; ", problems));
+            }
+            return (true, $"Live: {_active.Count} device(s) send their alarms here as they happen." +
+                          (problems.Count == 0 ? "" : $" Not live: {string.Join("; ", problems)}"));
+        }
+
+        public async Task<string> StopAsync()
+        {
+            svc.AlarmNotified -= Relay;
+            var failed = 0;
+            foreach (var r in _active.ToList())
+            {
+                var outcome = await writer.ListenForAlarmsAsync(r with { Stop = true });
+                if (outcome.Success) _active.Remove(r); else failed++;
+            }
+            return failed == 0 ? "Live alarms stopped; BACprobe took itself off the recipient lists."
+                : $"{failed} device(s) still list BACprobe. Likely cause: they stopped answering. Next step: leaving the app offers to remove it again.";
+        }
     }
 
     /// <summary>Acknowledge one alarm: refused in read-only mode, confirmed in plain English, sent and logged by the writer.</summary>

@@ -12,6 +12,7 @@ namespace BACprobe.Core.Simulation;
 public sealed class SimulatedDevice : IDisposable
 {
     private readonly BacnetClient _client;
+    private readonly SimulatedIpTransport _transport;
     private readonly bool _supportRpm;
     private readonly bool _drift;
     private readonly Random _rng = new();
@@ -78,8 +79,8 @@ public sealed class SimulatedDevice : IDisposable
         _supportEvents = supportEvents;
         _covLimit = covLimit;
         _supportRpm = supportRpm;
-        var transport = new BacnetIpUdpProtocolTransport(port, useExclusivePort: false,
-            localEndpointIp: adapter.Address.ToString());
+        var transport = new SimulatedIpTransport(port, adapter.Address.ToString());
+        _transport = transport;
         _client = new BacnetClient(transport) { VendorId = model.VendorId };
         _client.OnWhoIs += OnWhoIs;
         _client.OnReadPropertyRequest += OnReadProperty;
@@ -89,10 +90,94 @@ public sealed class SimulatedDevice : IDisposable
         _client.OnReadRange += OnReadRange;
         _client.OnWhoHas += OnWhoHas;
         _client.OnTimeSynchronize += OnTimeSynchronize;
+        _client.OnConfirmedServiceRequest += OnRawConfirmedRequest;
         _client.OnDeviceCommunicationControl += OnCommunicationControl;
         _client.OnReinitializedDevice += OnReinitialize;
         _client.OnGetAlarmSummaryOrEventInformation += OnGetEventInformation;
         _client.OnAlarmAcknowledge += OnAlarmAcknowledge;
+    }
+
+    /// <summary>
+    /// AddListElement / RemoveListElement on a Notification Class's Recipient_List. The library has no handler for these, so they are
+    /// decoded here from the raw request. (The library then also sends "unrecognized service"; <see cref="SimulatedIpTransport"/> drops it.)
+    /// </summary>
+    private void OnRawConfirmedRequest(BacnetClient sender, BacnetAddress adr, BacnetPduTypes type, BacnetConfirmedServices service,
+        BacnetMaxSegments maxSegments, BacnetMaxAdpu maxAdpu, byte invokeId, byte[] buffer, int offset, int length)
+    {
+        if (service is not (BacnetConfirmedServices.SERVICE_CONFIRMED_ADD_LIST_ELEMENT or BacnetConfirmedServices.SERVICE_CONFIRMED_REMOVE_LIST_ELEMENT)) return;
+        if (Silent) return;
+        var end = offset + length;
+        var pos = offset;
+        pos += ASN1.decode_context_object_id(buffer, pos, 0, out ushort objType, out uint instance);
+        pos += ASN1.decode_tag_number_and_value(buffer, pos, out byte _, out uint propLen);
+        pos += ASN1.decode_enumerated(buffer, pos, propLen, out uint property);
+        if (ASN1.decode_is_context_tag(buffer, pos, 2)) pos += ASN1.decode_tag_number_and_value(buffer, pos, out byte _, out uint idxLen) + (int)idxLen;
+        var nc = new BacnetObjectId((BacnetObjectTypes)objType, instance);
+        SimError? err;
+        if (property != (uint)BacnetPropertyIds.PROP_RECIPIENT_LIST || !ASN1.decode_is_opening_tag_number(buffer, pos, 3))
+            err = new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
+        else
+        {
+            err = null;
+            var add = service == BacnetConfirmedServices.SERVICE_CONFIRMED_ADD_LIST_ELEMENT;
+            foreach (var r in Alarms.AlarmRecipient.DecodeList(buffer, pos + 1, end))
+            {
+                err = add ? Model.AddRecipient(nc, r) : Model.RemoveRecipient(nc, r);
+                Log?.Invoke($"[{Model.Instance}] {(add ? "AddListElement" : "RemoveListElement")} {nc} Recipient_List {r.AddressText} from {adr}" +
+                            (err is { } e ? $" -> {e.Code}" : ""));
+                if (err is not null) break;
+            }
+        }
+        if (err is { } bad) sender.ErrorResponse(adr, service, invokeId, bad.Class, bad.Code);
+        else sender.SimpleAckResponse(adr, service, invokeId);
+        _transport.MarkAnswered(adr, invokeId); // the library will now reject it as unrecognized: drop that
+    }
+
+    /// <summary>Send each queued alarm transition to the recipients of its notification class (unconfirmed, as BACprobe asks).</summary>
+    private void SendEventNotifications()
+    {
+        foreach (var t in Model.DrainTransitions())
+            foreach (var r in Model.RecipientsOf(t.NotificationClass))
+            {
+                if (r.EndPoint is not { } ep) continue;
+                var data = new BacnetEventNotificationData
+                {
+                    processIdentifier = r.ProcessId,
+                    initiatingObjectIdentifier = new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, Model.Instance),
+                    eventObjectIdentifier = t.Point,
+                    timeStamp = t.Stamp,
+                    notificationClass = t.NotificationClass,
+                    priority = (byte)(t.To == BacnetEventStates.EVENT_STATE_FAULT ? 50 : t.To == BacnetEventStates.EVENT_STATE_NORMAL ? 200 : 100),
+                    notifyType = BacnetNotifyTypes.NOTIFY_ALARM,
+                    ackRequired = true,
+                    fromState = t.From,
+                    toState = t.To,
+                };
+                var flags = BacnetBitString.ConvertFromInt((uint)Model.StatusFlags(t.Point), 4);
+                // The library cannot encode CHANGE_OF_RELIABILITY, so faults go out with the point's own algorithm, as older devices do.
+                if (t.Value is null)
+                {
+                    data.eventType = BacnetEventTypes.EVENT_CHANGE_OF_STATE;
+                    data.changeOfState_newState = new BacnetPropertyState
+                    {
+                        tag = BacnetPropertyState.BacnetPropertyStateTypes.STATE,
+                        state = new BacnetPropertyState.State { state = t.To },
+                    };
+                    data.changeOfState_statusFlags = flags;
+                }
+                else
+                {
+                    data.eventType = BacnetEventTypes.EVENT_OUT_OF_RANGE;
+                    data.outOfRange_exceedingValue = t.Value ?? 0;
+                    data.outOfRange_statusFlags = flags;
+                    data.outOfRange_deadband = t.Deadband;
+                    data.outOfRange_exceededLimit = t.Limit ?? 0;
+                }
+                var to = new BacnetAddress(BacnetAddressTypes.IP, ep.ToString());
+                Log?.Invoke($"[{Model.Instance}] EventNotification {t.Point} {t.From} -> {t.To} to {r.AddressText}");
+                try { _client.SendUnconfirmedEventNotification(to, data); }
+                catch (Exception) { /* a recipient that has gone away */ }
+            }
     }
 
     private void OnTimeSynchronize(BacnetClient sender, BacnetAddress adr, DateTime dateTime, bool utc)
@@ -396,6 +481,7 @@ public sealed class SimulatedDevice : IDisposable
     private void CheckCov()
     {
         if (InitiationMuted || Silent) return; // told not to send anything on its own
+        SendEventNotifications();
         List<CovSub> subs;
         lock (_subsLock)
         {

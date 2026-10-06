@@ -123,6 +123,21 @@ public partial class MainWindow : Window
                     return (false, null);
                 }
             };
+            vm.ConfirmAlarmListen = requests =>
+            {
+                try
+                {
+                    var owner = OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this;
+                    return PromptWindow.Show(owner, Prompts.ForAlarmListen(requests),
+                        [new PromptButton(requests[0].ConfirmLabel), new PromptButton("Cancel", IsCancel: true)]) == 0;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "BACprobe could not show the confirmation, so nothing was changed." + Environment.NewLine + Environment.NewLine + ex.Message,
+                        "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return false;
+                }
+            };
             vm.ConfirmPropertyWrite = request =>
             {
                 try

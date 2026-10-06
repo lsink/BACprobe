@@ -17,8 +17,11 @@
     </Grid.RowDefinitions>
 
     <DockPanel>
-      <Button DockPanel.Dock="Right" Content="Refresh" Padding="18,4" Margin="12,0,0,0" VerticalAlignment="Top"
-              Command="{Binding RefreshCommand}" ToolTip="Ask every device again. The list is not updated live." />
+      <Button DockPanel.Dock="Right" Content="Refresh" Padding="18,4" Margin="8,0,0,0" VerticalAlignment="Top"
+              Command="{Binding RefreshCommand}" ToolTip="Ask every device again." />
+      <Button DockPanel.Dock="Right" Content="{Binding LiveButtonText}" Padding="14,4" Margin="12,0,0,0" VerticalAlignment="Top"
+              Command="{Binding ToggleLiveCommand}" AutomationProperties.Name="Live alarms"
+              ToolTip="Have the devices send their alarms here the moment they happen: BACprobe adds itself to their alarm recipient lists (asks first) and takes itself off again when you stop or close this window. Off in read-only mode." />
       <StackPanel>
         <TextBlock Text="{Binding Summary}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Opacity="0.8" Margin="0,2,0,0" />
@@ -74,6 +77,10 @@
       </DockPanel>
     </Border>
 
+    <Expander Grid.Row="4" Header="Alarms as they arrived (live)" Margin="0,10,0,0"
+              Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibility}}" IsExpanded="True">
+      <ListBox ItemsSource="{Binding LiveLog}" MaxHeight="120" FontFamily="Consolas" AutomationProperties.Name="Live alarm log" />
+    </Expander>
     <TextBlock Grid.Row="4" Text="Could not check everything" FontWeight="SemiBold" Margin="0,12,0,4"
                Visibility="{Binding HasFindings, Converter={StaticResource BoolToVisibility}}" />
     <Border Grid.Row="5" BorderThickness="1" BorderBrush="{DynamicResource PanelBorderBrush}" CornerRadius="4" Padding="8,4" MaxHeight="160"

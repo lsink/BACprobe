@@ -58,6 +58,20 @@ public static class Prompts
 
     public static PromptContent ForPropertyWrite(PropertyWriteRequest r) => new("Change a property", r.Headline, r.Facts, r.Consequence, r.Warning);
 
+    /// <summary>One confirmation for getting several devices' alarms live (one line per device).</summary>
+    public static PromptContent ForAlarmListen(IReadOnlyList<Alarms.AlarmListenRequest> requests)
+    {
+        if (requests.Count == 1) return ForAlarmListen(requests[0]);
+        var facts = requests.Take(MaxRows)
+            .Select(r => new ConfirmFact($"{r.DeviceName} ({r.Device.InstanceId})", r.ClassesText)).ToList();
+        if (requests.Count > MaxRows) facts.Add(new ConfirmFact("", $"...and {requests.Count - MaxRows} more"));
+        return new PromptContent("Get alarms live", $"Get alarms live from {requests.Count} devices?", facts,
+            requests[0].Consequence, requests[0].Warning);
+    }
+
+    public static PromptContent ForAlarmListen(Alarms.AlarmListenRequest r) =>
+        new(r.Stop ? "Stop live alarms" : "Get alarms live", r.Headline, r.Facts, r.Consequence, r.Warning);
+
     public static PromptContent ForAck(Alarms.AlarmAckRequest r) => new("Acknowledge alarm", r.Headline, r.Facts, r.Consequence, r.Warning);
 
     public static PromptContent ForOutOfService(OutOfServiceRequest r) => new(

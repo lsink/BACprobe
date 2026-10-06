@@ -259,11 +259,16 @@ public sealed record TrackedOverride(DiscoveredDevice Device, string DeviceName,
     /// <summary>Priority -1 stands for "muted" (DeviceCommunicationControl): the whole device, offered for un-muting before leaving.</summary>
     public const int MutedPriority = -1;
 
+    /// <summary>Priority -2 stands for "BACprobe is on this notification class's recipient list": offered for removal before leaving.</summary>
+    public const int AlarmRecipientPriority = -2;
+
+    public bool IsAlarmRecipient => Priority == AlarmRecipientPriority;
+
     public bool IsOutOfService => Priority == OutOfServicePriority;
     public bool IsMuted => Priority == MutedPriority;
 
     /// <summary>"22.5 at priority 8 (Manual Operator)", "out of service", or "muted" for a device that was told to stop talking.</summary>
-    public string HeldAs => IsMuted ? $"muted ({ValueText})" : IsOutOfService ? "out of service"
+    public string HeldAs => IsAlarmRecipient ? "BACprobe is on its alarm recipient list" : IsMuted ? $"muted ({ValueText})" : IsOutOfService ? "out of service"
         : $"{ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)})";
 
     public string Description =>

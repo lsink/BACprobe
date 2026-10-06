@@ -32,7 +32,40 @@ public sealed class DiscoveryService : IDisposable
         _client = new BacnetClient(transport, timeoutMs, retries) { MaxSegments = BacnetMaxSegments.MAX_SEG65 };
         _client.OnIam += OnIam;
         _client.OnIAmRouterToNetworkMessage += OnIAmRouter;
+        _client.OnEventNotify += OnEventNotify;
+        _client.OnUnconfirmedServiceRequest += OnUnconfirmedEventNotify;
     }
+
+    /// <summary>An alarm or event notification arrived (only once BACprobe is on a recipient list; see <see cref="Alarms.AlarmListenRequest"/>).</summary>
+    public event Action<Alarms.AlarmNotification>? AlarmNotified;
+
+    // Confirmed notifications (a device may send them although BACprobe asks for unconfirmed): answer, or it keeps resending.
+    private void OnEventNotify(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetEventNotificationData data, bool needConfirm)
+    {
+        if (!needConfirm) return; // unconfirmed ones are read in OnUnconfirmedEventNotify, which also copes with types the library cannot decode
+        sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_EVENT_NOTIFICATION, invokeId);
+        AlarmNotified?.Invoke(new Alarms.AlarmNotification(data.initiatingObjectIdentifier.instance, data.eventObjectIdentifier,
+            data.fromState, data.toState, data.messageText, DateTime.Now));
+    }
+
+    private void OnUnconfirmedEventNotify(BacnetClient sender, BacnetAddress adr, BacnetPduTypes type, BacnetUnconfirmedServices service,
+        byte[] buffer, int offset, int length)
+    {
+        if (service != BacnetUnconfirmedServices.SERVICE_UNCONFIRMED_EVENT_NOTIFICATION || AlarmNotified is null) return;
+        var now = DateTime.Now;
+        var n = System.IO.BACnet.Serialize.Services.DecodeEventNotifyData(buffer, offset, length, out var data) >= 0
+            ? new Alarms.AlarmNotification(data.initiatingObjectIdentifier.instance, data.eventObjectIdentifier, data.fromState, data.toState,
+                data.messageText, now)
+            : Alarms.AlarmNotification.FromHeader(buffer, offset, length, now); // a vendor or newer event type: still know whose alarms changed
+        if (n is not null) AlarmNotified?.Invoke(n);
+    }
+
+    /// <summary>BACprobe's own recipient entry, for alarm recipient lists: only on BACnet/IP (null on MS/TP for now).</summary>
+    public Alarms.AlarmRecipient? OwnRecipient => _transport is BacnetIpUdpProtocolTransport ip ? Alarms.AlarmRecipient.ForEndPoint(ip.LocalEndPoint) : null;
+
+    /// <summary>A device's Notification Class objects (where alarm recipients are kept). Throws if the object list cannot be read.</summary>
+    public async Task<IReadOnlyList<BacnetObjectId>> ReadNotificationClassesAsync(DiscoveredDevice device, CancellationToken ct = default) =>
+        [.. (await OpenDevice(device).ReadObjectListAsync(ct)).Where(id => id.type == BacnetObjectTypes.OBJECT_NOTIFICATION_CLASS)];
 
     /// <summary>Set after <see cref="RegisterWithBbmdAsync"/>. While registered, Who-Is also goes through the BBMD.</summary>
     public Bbmd.ForeignDeviceRegistration? BbmdRegistration { get; private set; }

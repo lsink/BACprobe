@@ -45,6 +45,7 @@ internal static partial class Program
 
         var reader = svc.CreateAlarmReader();
         if (ack is { } point) return await AcknowledgeAsync(svc, reader, devices[0], point, opts);
+        if (opts.ContainsKey("listen")) return await ListenAsync(svc, devices, opts);
 
         Console.WriteLine($"Asking {devices.Count} device(s) for their alarms...");
         var results = await reader.ReadAllAsync(devices);
@@ -76,6 +77,78 @@ internal static partial class Program
             PrintFindings(findings);
         }
         return events.Count > 0 ? 5 : 0;
+    }
+
+    /// <summary>
+    /// Add BACprobe to each device's alarm recipient lists (after confirming), print alarms as they arrive, and take BACprobe off again
+    /// when done (after --minutes, default 10, or Ctrl+C).
+    /// </summary>
+    private static async Task<int> ListenAsync(DiscoveryService svc, IReadOnlyList<DiscoveredDevice> devices, Dictionary<string, string?> opts)
+    {
+        if (svc.OwnRecipient is not { } me)
+            return Fail("Live alarms work over BACnet/IP only for now.\n  Next step:    use 'bacprobe alarms' to read them by hand.");
+        var minutes = IntOpt(opts, "minutes", 10);
+        if (minutes is < 1 or > 240) throw new ArgumentException("--minutes must be between 1 and 240.");
+
+        var requests = new List<AlarmListenRequest>();
+        foreach (var d in devices)
+        {
+            try
+            {
+                var classes = await svc.ReadNotificationClassesAsync(d);
+                if (classes.Count > 0) requests.Add(new AlarmListenRequest(d, d.ObjectName ?? $"device {d.InstanceId}", classes, me));
+                else Console.WriteLine($"Device {d.InstanceId}: no notification classes, so it does not send alarms itself. Skipped.");
+            }
+            catch (Exception ex) { Console.WriteLine($"Device {d.InstanceId}: could not read its objects ({ex.Message}). Skipped."); }
+        }
+        if (requests.Count == 0) return Fail("No device here can send its alarms to BACprobe.\n  Next step:    use 'bacprobe alarms' to read them by hand.");
+
+        Console.WriteLine();
+        foreach (var r in requests) PrintExplanation(Prompts.ForAlarmListen(r));
+        if (!opts.ContainsKey("yes"))
+        {
+            if (Console.IsInputRedirected)
+                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
+            Console.Write($"Type y to add BACprobe to {requests.Sum(r => r.NotificationClasses.Count)} recipient list(s) on {requests.Count} device(s): ");
+            if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Cancelled. Nothing was changed.");
+                return 0;
+            }
+        }
+
+        var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
+        svc.AlarmNotified += n => Console.WriteLine(n.Text);
+        var listening = new List<AlarmListenRequest>();
+        foreach (var r in requests)
+        {
+            var outcome = await writer.ListenForAlarmsAsync(r);
+            if (outcome.Success) listening.Add(r);
+            else Console.WriteLine($"Device {r.Device.InstanceId}: {outcome.Message}");
+        }
+        if (listening.Count == 0) return Fail("No device accepted BACprobe as a recipient.");
+
+        Console.WriteLine($"\nListening for alarms for {minutes} minute(s). Ctrl+C stops early; BACprobe then takes itself off the lists.");
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(minutes));
+        ConsoleCancelEventHandler stop = (_, e) => { e.Cancel = true; cts.Cancel(); };
+        Console.CancelKeyPress += stop;
+        try { await Task.Delay(Timeout.Infinite, cts.Token); }
+        catch (OperationCanceledException) { }
+        Console.CancelKeyPress -= stop;
+
+        Console.WriteLine("\nTaking BACprobe off the recipient lists...");
+        var failed = 0;
+        foreach (var r in listening)
+        {
+            var outcome = await writer.ListenForAlarmsAsync(r with { Stop = true });
+            if (!outcome.Success)
+            {
+                failed++;
+                Console.WriteLine($"Device {r.Device.InstanceId}: {outcome.Message}");
+            }
+        }
+        Console.WriteLine(failed == 0 ? "Done. Logged to " + WriteLog.DefaultPath : $"{failed} device(s) still list BACprobe: remove it in the controller's tool.");
+        return failed == 0 ? 0 : 1;
     }
 
     private static async Task<int> AcknowledgeAsync(DiscoveryService svc, AlarmReader reader, DiscoveredDevice device, BacnetObjectId point,

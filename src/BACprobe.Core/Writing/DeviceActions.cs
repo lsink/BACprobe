@@ -136,6 +136,33 @@ public sealed record DeviceActionRequest(DiscoveredDevice Device, string DeviceN
         : null;
 }
 
+/// <summary>Why adding BACprobe to (or taking it off) an alarm recipient list failed.</summary>
+public static class AlarmListenErrors
+{
+    public static WriteErrorText Explain(Exception ex, bool stopping)
+    {
+        var m = ex.Message;
+        bool Has(string s) => m.Contains(s, StringComparison.OrdinalIgnoreCase);
+        if (BacnetFailure.IsTimeout(ex))
+            return new("The device did not answer (timeout).",
+                "Network drop or a busy controller. The change may or may not have happened.",
+                stopping ? "Check the recipient list in the controller's tool." : "Try again, or use Refresh to look at alarms by hand.");
+        if (Has("LIST_ELEMENT_NOT_FOUND"))
+            return new("BACprobe was not on that recipient list.", "It was removed already, or the device was restarted and lost it.", "Nothing to do.");
+        if (Has("NO_SPACE") || Has("RESOURCES"))
+            return new("The device has no room for another recipient.", "Its recipient list is full (some controllers allow only a few).",
+                "Use Refresh to look at alarms by hand instead.");
+        if (Has("UNRECOGNIZED_SERVICE") || Has("REJECT") || Has("SERVICE_REQUEST_DENIED"))
+            return new($"The device refused ({m}).", "It does not support adding list entries from the network.",
+                "Use Refresh to look at alarms by hand instead.");
+        if (Has("WRITE_ACCESS_DENIED"))
+            return new("The device refused: its recipient lists are protected.", "It only lets its own tool change them.",
+                "Use Refresh to look at alarms by hand instead.");
+        return new($"The device returned an error: {m}", "The controller refused for a reason BACprobe does not recognise.",
+            "Use Refresh to look at alarms by hand instead.");
+    }
+}
+
 /// <summary>Why a device action failed, with a likely cause and next step.</summary>
 public static class DeviceActionErrors
 {

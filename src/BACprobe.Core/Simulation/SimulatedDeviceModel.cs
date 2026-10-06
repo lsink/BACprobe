@@ -27,6 +27,75 @@ public sealed class SimulatedDeviceModel
         public bool Stuck { get; set; }
         /// <summary>Non-null for points that report their own alarms (intrinsic reporting).</summary>
         public SimEvent? Event { get; set; }
+        /// <summary>Non-null for a Notification Class object: who gets the alarms that use it.</summary>
+        public List<Alarms.AlarmRecipient>? Recipients { get; set; }
+    }
+
+    /// <summary>A change of alarm state waiting to be sent to the recipients of the point's notification class.</summary>
+    public sealed record SimTransition(BacnetObjectId Point, BacnetEventStates From, BacnetEventStates To, BacnetGenericTime Stamp,
+        uint NotificationClass, float? Value, float? Limit, float Deadband, uint Reliability);
+
+    private readonly List<SimTransition> _transitions = [];
+
+    /// <summary>Transitions since the last call, to send as event notifications (outside the model's lock).</summary>
+    public IReadOnlyList<SimTransition> DrainTransitions()
+    {
+        lock (_lock)
+        {
+            var list = _transitions.ToList();
+            _transitions.Clear();
+            return list;
+        }
+    }
+
+    /// <summary>A Notification Class object with an empty recipient list, for points to send their alarms through.</summary>
+    public void AddNotificationClass(uint instance, string name)
+    {
+        lock (_lock)
+        {
+            var o = Add(BacnetObjectTypes.OBJECT_NOTIFICATION_CLASS, instance, name);
+            o.Recipients = [];
+            Set(o, BacnetPropertyIds.PROP_NOTIFICATION_CLASS, Uint(instance));
+            Set(o, BacnetPropertyIds.PROP_PRIORITY, Uint(100), Uint(50), Uint(200));
+            Set(o, BacnetPropertyIds.PROP_ACK_REQUIRED, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt(7, 3)));
+            Set(o, BacnetPropertyIds.PROP_RECIPIENT_LIST, Null()); // placeholder so it is listed; the real list comes from Raw()
+        }
+    }
+
+    /// <summary>AddListElement on a Recipient_List: an entry the same as one already there is not added twice.</summary>
+    public SimError? AddRecipient(BacnetObjectId notificationClass, Alarms.AlarmRecipient recipient)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(notificationClass, out var o))
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_OBJECT, BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT);
+            if (o.Recipients is not { } list)
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_UNKNOWN_PROPERTY);
+            if (!list.Any(r => r.SameAs(recipient))) list.Add(recipient);
+            return null;
+        }
+    }
+
+    /// <summary>RemoveListElement on a Recipient_List.</summary>
+    public SimError? RemoveRecipient(BacnetObjectId notificationClass, Alarms.AlarmRecipient recipient)
+    {
+        lock (_lock)
+        {
+            if (!_objects.TryGetValue(notificationClass, out var o) || o.Recipients is not { } list)
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_OBJECT, BacnetErrorCodes.ERROR_CODE_UNKNOWN_OBJECT);
+            if (list.RemoveAll(r => r.SameAs(recipient)) == 0)
+                return new SimError(BacnetErrorClasses.ERROR_CLASS_SERVICES, BacnetErrorCodes.ERROR_CODE_LIST_ELEMENT_NOT_FOUND);
+            return null;
+        }
+    }
+
+    /// <summary>Who gets alarms sent through this notification class.</summary>
+    public IReadOnlyList<Alarms.AlarmRecipient> RecipientsOf(uint notificationClass)
+    {
+        lock (_lock)
+            return _objects.TryGetValue(new BacnetObjectId(BacnetObjectTypes.OBJECT_NOTIFICATION_CLASS, notificationClass), out var o) && o.Recipients is { } list
+                ? [.. list]
+                : [];
     }
 
     /// <summary>A point's alarm state as a controller keeps it: current state, acknowledged flags and when each transition last happened.</summary>
@@ -50,8 +119,8 @@ public sealed class SimulatedDeviceModel
         lock (_lock)
         {
             if (!_objects.TryGetValue(id, out var o)) return;
-            o.Event ??= new SimEvent();
-            o.Event.High = high;
+            UsesEvents(o);
+            o.Event!.High = high;
             o.Event.Low = low;
             o.Event.Deadband = deadband;
             Set(o, BacnetPropertyIds.PROP_HIGH_LIMIT, Real(high));
@@ -67,7 +136,7 @@ public sealed class SimulatedDeviceModel
         lock (_lock)
         {
             if (!_objects.TryGetValue(id, out var o)) return;
-            o.Event ??= new SimEvent();
+            UsesEvents(o);
             EvaluateEvent(o);
         }
     }
@@ -78,9 +147,29 @@ public sealed class SimulatedDeviceModel
         lock (_lock)
         {
             if (!_objects.TryGetValue(id, out var o)) return;
-            o.Event ??= new SimEvent();
-            Transition(o.Event, state, at);
+            UsesEvents(o);
+            Transition(o, state, at);
         }
+    }
+
+    /// <summary>The point reports alarms, through notification class 1.</summary>
+    private static void UsesEvents(SimObject o)
+    {
+        o.Event ??= new SimEvent();
+        if (!o.Props.ContainsKey(BacnetPropertyIds.PROP_NOTIFICATION_CLASS)) Set(o, BacnetPropertyIds.PROP_NOTIFICATION_CLASS, Uint(1));
+    }
+
+    private void Transition(SimObject o, BacnetEventStates state, DateTime at)
+    {
+        var e = o.Event!;
+        var from = e.State;
+        Transition(e, state, at);
+        var t = (int)Alarms.EventText.TransitionInto(state);
+        var nc = o.Props.TryGetValue(BacnetPropertyIds.PROP_NOTIFICATION_CLASS, out var n) && n is [{ Value: uint c }] ? c : 1;
+        var value = Raw(o, BacnetPropertyIds.PROP_PRESENT_VALUE) is [{ Value: float f }] ? f : (float?)null;
+        var limit = state == BacnetEventStates.EVENT_STATE_LOW_LIMIT || from == BacnetEventStates.EVENT_STATE_LOW_LIMIT ? e.Low : e.High;
+        var reliability = o.Props.TryGetValue(BacnetPropertyIds.PROP_RELIABILITY, out var r) && r is [{ Value: uint code }] ? code : 0;
+        _transitions.Add(new SimTransition(o.Id, from, state, e.Stamps[t], nc, value, limit, e.Deadband, reliability));
     }
 
     private static void Transition(SimEvent e, BacnetEventStates state, DateTime at)
@@ -107,7 +196,7 @@ public sealed class SimulatedDeviceModel
                 next = BacnetEventStates.EVENT_STATE_LOW_LIMIT;
         }
         else if (o.InAlarm) next = BacnetEventStates.EVENT_STATE_OFFNORMAL;
-        if (next != e.State) Transition(e, next, DateTime.Now + ClockSkew);
+        if (next != e.State) Transition(o, next, DateTime.Now + ClockSkew);
     }
 
     /// <summary>The GetEventInformation list: every point in alarm or fault, or with a transition not yet acknowledged, in object order.</summary>
@@ -518,6 +607,7 @@ public sealed class SimulatedDeviceModel
         m.AddMultiState(BacnetObjectTypes.OBJECT_MULTI_STATE_OUTPUT, 1, "Fan Speed", "Supply fan speed command", 3, ["Off", "Low", "Medium", "High"]);
         m.AddMultiState(BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT, 1, "Filter Status", "Filter differential pressure switch", 1,
             ["Clean", "Dirty", "Missing"]);
+        m.AddNotificationClass(1, "Alarms");
         // Troublemakers for testing the write explainer: a point already held at a high priority, and one that refuses writes.
         if (stuck) m.PreOverride(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_VALUE, 1), 5, Enum(1));
         if (protectedSetpoint) m.Lock(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1));
@@ -573,6 +663,8 @@ public sealed class SimulatedDeviceModel
             return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, BacnetBitString.ConvertFromInt((uint)FlagsOf(o), 4))];
         if (p == BacnetPropertyIds.PROP_EVENT_STATE && HasStatus(o))
             return [Enum((uint)(o.Event?.State ?? BacnetEventStates.EVENT_STATE_NORMAL))];
+        if (p == BacnetPropertyIds.PROP_RECIPIENT_LIST && o.Recipients is { } recipients)
+            return recipients.Select(x => x.ToValue()).ToList();
         if (o.Event is { } ev)
         {
             if (p == BacnetPropertyIds.PROP_ACKED_TRANSITIONS) return [new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BIT_STRING, AckedBits(ev))];

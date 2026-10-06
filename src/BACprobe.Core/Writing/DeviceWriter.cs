@@ -224,6 +224,62 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         }
     }
 
+    /// <summary>BACprobe's own recipient entry (where alarms should be sent); null when the connection is not BACnet/IP.</summary>
+    public Alarms.AlarmRecipient? Me => client.Transport is BacnetIpUdpProtocolTransport ip ? Alarms.AlarmRecipient.ForEndPoint(ip.LocalEndPoint) : null;
+
+    /// <summary>
+    /// Add BACprobe to (or take it off) the recipient lists of these notification classes. Adding is refused in read-only mode and tracked,
+    /// so leaving offers to undo it; taking it off is cleanup and always allowed. Callers must have shown the confirmation first.
+    /// </summary>
+    public async Task<WriteOutcome> ListenForAlarmsAsync(Alarms.AlarmListenRequest request, CancellationToken ct = default)
+    {
+        if (ReadOnly && !request.Stop)
+        {
+            foreach (var nc in request.NotificationClasses) LogListen(request, nc, false, "blocked: read-only mode");
+            return ReadOnlyOutcome;
+        }
+        if (request.NotificationClasses.Count == 0)
+            return new WriteOutcome(false, "This device has no Notification Class objects, so it cannot send its alarms to BACprobe.\n" +
+                                           "  Likely cause: it does not report alarms itself (a front-end may be watching its points instead).\n" +
+                                           "  Next step:    use Refresh in the alarm list to look again by hand.");
+        var reference = new BacnetPropertyReference((uint)BacnetPropertyIds.PROP_RECIPIENT_LIST, System.IO.BACnet.Serialize.ASN1.BACNET_ARRAY_ALL);
+        var done = 0;
+        foreach (var nc in request.NotificationClasses)
+        {
+            try
+            {
+                if (request.Stop)
+                {
+                    await client.RemoveListElementAsync(request.Device.Address, nc, reference, [request.Me.ToValue()], cancellationToken: ct);
+                    tracker.Remove(request.Device.InstanceId, nc, TrackedOverride.AlarmRecipientPriority);
+                }
+                else
+                {
+                    await client.AddListElementAsync(request.Device.Address, nc, reference, [request.Me.ToValue()], cancellationToken: ct);
+                    tracker.Record(new TrackedOverride(request.Device, request.DeviceName, nc, BacnetNames.ObjectLabel(nc),
+                        TrackedOverride.AlarmRecipientPriority, request.Me.AddressText));
+                }
+                LogListen(request, nc, true, "done");
+                done++;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                var text = AlarmListenErrors.Explain(ex, request.Stop);
+                LogListen(request, nc, false, text.Summary);
+                // Taking BACprobe off a list it was never on (or that the device emptied) is not worth keeping a reminder for.
+                if (request.Stop && ex.Message.Contains("LIST_ELEMENT_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+                    tracker.Remove(request.Device.InstanceId, nc, TrackedOverride.AlarmRecipientPriority);
+                var partly = done > 0 ? $"{done} of {request.NotificationClasses.Count} done, then: " : "";
+                return new WriteOutcome(false, partly + text.Full);
+            }
+        }
+        return new WriteOutcome(true, request.Stop ? "BACprobe is off the recipient lists" : $"BACprobe is on {done} recipient list(s)");
+    }
+
+    private void LogListen(Alarms.AlarmListenRequest r, BacnetObjectId nc, bool success, string result) =>
+        log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Device.InstanceId, r.DeviceName, BacnetNames.ObjectLabel(nc), r.LogAction(nc),
+            Priority: 0, success, result)); // a configuration change has no priority
+
     /// <summary>Device clock minus PC clock, or null if the device will not say.</summary>
     private async Task<TimeSpan?> ReadClockSkewAsync(DiscoveredDevice device, CancellationToken ct)
     {
@@ -320,7 +376,10 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         int ok = 0, bad = 0;
         foreach (var o in tracker.Active)
         {
-            var outcome = o.IsMuted
+            var outcome = o.IsAlarmRecipient
+                ? await ListenForAlarmsAsync(new Alarms.AlarmListenRequest(o.Device, o.DeviceName, [o.Point], Me ?? throw new InvalidOperationException(
+                    "BACprobe's address is unknown, so it cannot take itself off the recipient list."), Stop: true), ct)
+                : o.IsMuted
                 ? await RunDeviceActionAsync(new DeviceActionRequest(o.Device, o.DeviceName, DeviceActionKind.Unmute, Password: o.Password), ct)
                 : o.IsOutOfService
                 ? await SetOutOfServiceAsync(new OutOfServiceRequest(o.Device, o.DeviceName, o.Point, o.ObjectName, TurnOn: false), ct)
