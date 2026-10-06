@@ -16,7 +16,7 @@ internal static partial class Program
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
           bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--no-events] [--skew <minutes>] [--password <p>] [--differ] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
-          bacprobe objects   --device <instance> [--adapter <ip>]
+          bacprobe objects   --device <instance> [--tree] [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
           bacprobe job show  <site.bacprobe> [--device <n>] [--log]
@@ -48,7 +48,7 @@ internal static partial class Program
         --adapter  IPv4 address of the NIC to use (default: the only usable adapter, else you must choose).
         --low/--high  Limit Who-Is to a device instance range.
         --wait     Seconds to listen for I-Am replies (default 5).
-        objects    List a device's objects with name, value and units. read: all properties of one object, e.g. --object ai:1
+        objects    List a device's objects with name, value and units (--tree: in the device's own folders, its Structured Views). read: all properties of one object, e.g. --object ai:1
                    (types: ai ao av bi bo bv msi mso msv, or names like analog-input). --property reads just one.
         export     Save a point list: csv, xlsx (Excel, with a Devices sheet) or ede. Default file: bacprobe-points-<time>.csv
                    in the current folder; an existing file is never overwritten without --force.

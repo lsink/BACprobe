@@ -48,6 +48,26 @@ public sealed class SimulatedDeviceModel
         }
     }
 
+    /// <summary>
+    /// A Structured View (a folder in the device's own tree). Each entry is encoded as devices send it: [0] device (only for an object on
+    /// another device), then [1] the object.
+    /// </summary>
+    public void AddStructuredView(uint instance, string name, params (BacnetObjectId Point, uint? Device)[] members)
+    {
+        lock (_lock)
+        {
+            var o = Add(BacnetObjectTypes.OBJECT_STRUCTURED_VIEW, instance, name);
+            var values = members.Select(m =>
+            {
+                var b = new EncodeBuffer();
+                if (m.Device is { } d) ASN1.encode_context_object_id(b, 0, BacnetObjectTypes.OBJECT_DEVICE, d);
+                ASN1.encode_context_object_id(b, 1, m.Point.type, m.Point.instance);
+                return new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_CONTEXT_SPECIFIC_ENCODED, b.buffer[..b.offset]);
+            }).ToArray();
+            Set(o, BacnetPropertyIds.PROP_SUBORDINATE_LIST, values);
+        }
+    }
+
     /// <summary>A Notification Class object with an empty recipient list, for points to send their alarms through.</summary>
     public void AddNotificationClass(uint instance, string name)
     {
@@ -608,6 +628,14 @@ public sealed class SimulatedDeviceModel
         m.AddMultiState(BacnetObjectTypes.OBJECT_MULTI_STATE_INPUT, 1, "Filter Status", "Filter differential pressure switch", 1,
             ["Clean", "Dirty", "Missing"]);
         m.AddNotificationClass(1, "Alarms");
+        // The device's own folders, as a big controller has them: a box with two sub-folders and one point of its own.
+        static BacnetObjectId Id(BacnetObjectTypes t, uint i) => new(t, i);
+        m.AddStructuredView(2, "Temperatures", (Id(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 1), null), (Id(BacnetObjectTypes.OBJECT_ANALOG_INPUT, 2), null),
+            (Id(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1), null));
+        m.AddStructuredView(3, "Fan", (Id(BacnetObjectTypes.OBJECT_BINARY_INPUT, 1), null), (Id(BacnetObjectTypes.OBJECT_BINARY_OUTPUT, 1), null),
+            (Id(BacnetObjectTypes.OBJECT_MULTI_STATE_OUTPUT, 1), null));
+        m.AddStructuredView(1, "VAV Box", (Id(BacnetObjectTypes.OBJECT_STRUCTURED_VIEW, 2), null), (Id(BacnetObjectTypes.OBJECT_STRUCTURED_VIEW, 3), null),
+            (Id(BacnetObjectTypes.OBJECT_ANALOG_OUTPUT, 1), null));
         // Troublemakers for testing the write explainer: a point already held at a high priority, and one that refuses writes.
         if (stuck) m.PreOverride(new BacnetObjectId(BacnetObjectTypes.OBJECT_BINARY_VALUE, 1), 5, Enum(1));
         if (protectedSetpoint) m.Lock(new BacnetObjectId(BacnetObjectTypes.OBJECT_ANALOG_VALUE, 1));
@@ -645,7 +673,7 @@ public sealed class SimulatedDeviceModel
 
     private static bool IsArray(BacnetPropertyIds p) =>
         p is BacnetPropertyIds.PROP_OBJECT_LIST or BacnetPropertyIds.PROP_PRIORITY_ARRAY or BacnetPropertyIds.PROP_STATE_TEXT
-            or BacnetPropertyIds.PROP_EVENT_TIME_STAMPS;
+            or BacnetPropertyIds.PROP_EVENT_TIME_STAMPS or BacnetPropertyIds.PROP_SUBORDINATE_LIST;
 
     /// <summary>How far this device's clock is from the PC's (positive = ahead), to exercise the clock check.</summary>
     public TimeSpan ClockSkew { get; set; }

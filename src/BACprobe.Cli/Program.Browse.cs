@@ -21,6 +21,19 @@ internal static partial class Program
             Console.WriteLine($"{ids.Count} object(s). Reading names and values...");
             var summaries = await browser.ReadSummariesAsync(ids);
 
+            if (opts.ContainsKey("tree"))
+            {
+                var tree = StructureTree.Build(summaries, await browser.ReadStructuredViewsAsync(ids));
+                if (tree.Count == 0)
+                    Console.WriteLine("\nThis device has no Structured View objects (no folders of its own), so here is the flat list.");
+                else
+                {
+                    Console.WriteLine();
+                    foreach (var line in StructureTree.Lines(tree)) Console.WriteLine(line);
+                    return 0;
+                }
+            }
+
             Console.WriteLine();
             Console.WriteLine($"{"Object",-8} {"Type",-22} {"Name",-26} {"Value",-14} Description");
             foreach (var s in summaries)

@@ -16,7 +16,10 @@ public partial class MainWindow : Window
 
     private void OnOpenLessons(object sender, RoutedEventArgs e) => LessonWindow.Open();
 
-    private void OnExit(object sender, RoutedEventArgs e) => Close(); // still asks about overrides left in place (OnClosing)
+    private void OnExit(object sender, RoutedEventArgs e) => Close();
+
+    private void OnTreeSelected(object sender, RoutedPropertyChangedEventArgs<object> e) =>
+        (DataContext as MainViewModel)?.SelectFromTree(e.NewValue as Core.Browsing.StructureNode); // still asks about overrides left in place (OnClosing)
 
     /// <summary>File > Job name and notes: the same drop-down as the Job button.</summary>
     private void OnJobDetails(object sender, RoutedEventArgs e)

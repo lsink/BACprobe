@@ -929,11 +929,44 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         UpdateNoteTitle();
     }
 
+    // The device's own folders (Structured Views), when it has any: shown instead of the flat list when Folders is on.
+    public ObservableCollection<StructureNode> Structure { get; } = [];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowList))]
+    private bool _showTree;
+
+    public bool ShowList => !ShowTree;
+    public bool HasStructure => Structure.Count > 0;
+
+    /// <summary>A point picked in the folder tree: select it, as if it had been picked in the list.</summary>
+    public void SelectFromTree(StructureNode? node)
+    {
+        if (node?.Point is null) return;
+        if (Objects.FirstOrDefault(o => o.Summary.Id.Equals(node.Id)) is { } row) SelectedObject = row;
+    }
+
+    private async Task LoadStructureAsync(DeviceBrowser browser, IReadOnlyList<BacnetObjectId> ids, IReadOnlyList<ObjectSummary> summaries,
+        CancellationToken ct)
+    {
+        if (!ids.Any(i => i.type == BacnetObjectTypes.OBJECT_STRUCTURED_VIEW)) return;
+        try
+        {
+            var tree = StructureTree.Build(summaries, await browser.ReadStructuredViewsAsync(ids, ct));
+            if (ct.IsCancellationRequested) return;
+            foreach (var node in tree) Structure.Add(node);
+            OnPropertyChanged(nameof(HasStructure));
+        }
+        catch (Exception) when (!ct.IsCancellationRequested) { /* the flat list still has every point */ }
+    }
+
     private async Task LoadObjectsAsync(DeviceRow? row)
     {
         _browseCts?.Cancel();
         StopLive();
         Objects.Clear();
+        Structure.Clear();
+        OnPropertyChanged(nameof(HasStructure));
         UpdateOverrideSummary();
         Properties.Clear();
         PropertiesHeader = "Properties";
@@ -964,6 +997,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             foreach (var s in summaries) Objects.Add(new ObjectRow(s));
             ExportSelectedCommand.NotifyCanExecuteChanged();
             Status = $"{ids.Count} objects in {name}. Select one to see its properties.";
+            await LoadStructureAsync(browser, ids, summaries, cts.Token);
+            if (!HasStructure) ShowTree = false;
             UpdateOverrideSummary();
             if (IsLive) StartLive();
         }

@@ -507,6 +507,32 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         return names;
     }
 
+    /// <summary>
+    /// Each Structured View's Subordinate_List (the device's own folders). A view that cannot be read is left empty rather than failing
+    /// the lot; a device that stops answering throws.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<BacnetObjectId, IReadOnlyList<SubordinateRef>>> ReadStructuredViewsAsync(IEnumerable<BacnetObjectId> ids,
+        CancellationToken ct = default)
+    {
+        var views = new Dictionary<BacnetObjectId, IReadOnlyList<SubordinateRef>>();
+        var timeouts = 0;
+        foreach (var id in ids.Where(i => i.type == BacnetObjectTypes.OBJECT_STRUCTURED_VIEW))
+        {
+            try
+            {
+                views[id] = StructureTree.ParseSubordinates(
+                    await client.ReadPropertyAsync(device.Address, id, BacnetPropertyIds.PROP_SUBORDINATE_LIST, cancellationToken: ct));
+                timeouts = 0;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                views[id] = [];
+                if (BacnetFailure.IsTimeout(ex)) CountTimeout(ref timeouts, ex);
+            }
+        }
+        return views;
+    }
+
     /// <summary>Read one named property; throws the library's exception on error or timeout.</summary>
     public async Task<PropertyRow> ReadPropertyAsync(BacnetObjectId id, BacnetPropertyIds property, CancellationToken ct = default)
     {

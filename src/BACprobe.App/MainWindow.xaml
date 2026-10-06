@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:BACprobe.App"
+        xmlns:browsing="clr-namespace:BACprobe.Core.Browsing;assembly=BACprobe.Core"
         Title="{Binding WindowTitle}" Icon="Assets/app.ico" Height="860" Width="1400" MinHeight="600" MinWidth="1000">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BoolToVis" />
@@ -391,12 +392,36 @@
                           MinWidth="190" AutomationProperties.Name="Show which points"
                           ToolTip="Narrow the list to the points that need attention. Live values keep it up to date." />
                 <TextBlock Text="{Binding PointFilterStatus}" VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.75" />
+                <ToggleButton Content="Folders" IsChecked="{Binding ShowTree}" Padding="10,4" Margin="10,0,0,0"
+                              Visibility="{Binding HasStructure, Converter={StaticResource BoolToVis}}" AutomationProperties.Name="Show folders"
+                              ToolTip="Show the points in this device's own folders (its Structured Views) instead of one flat list." />
               </StackPanel>
             </DockPanel>
           </Border>
           <Grid>
+            <!-- List or folders: hidden until there are devices, so the start page shows cleanly -->
+            <Grid Visibility="{Binding Devices.Count, Converter={StaticResource CountToVis}}">
+            <!-- The device's own folders: a point picked here is selected as in the list -->
+            <TreeView ItemsSource="{Binding Structure}" BorderThickness="0" SelectedItemChanged="OnTreeSelected" AutomationProperties.Name="Point folders"
+                      Visibility="{Binding ShowTree, Converter={StaticResource BoolToVis}}">
+              <TreeView.ItemTemplate>
+                <HierarchicalDataTemplate DataType="{x:Type browsing:StructureNode}" ItemsSource="{Binding Children}">
+                  <TextBlock Text="{Binding Text}">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsView}" Value="True"><Setter Property="FontWeight" Value="SemiBold" /></DataTrigger>
+                          <DataTrigger Binding="{Binding Point.HasProblem}" Value="True"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /></DataTrigger>
+                          <DataTrigger Binding="{Binding Point.IsOverridden}" Value="True"><Setter Property="Foreground" Value="{DynamicResource OverrideBrush}" /></DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                </HierarchicalDataTemplate>
+              </TreeView.ItemTemplate>
+            </TreeView>
             <DataGrid ItemsSource="{Binding Objects}" SelectedItem="{Binding SelectedObject}"
-                      Visibility="{Binding Devices.Count, Converter={StaticResource CountToVis}}"
+                      Visibility="{Binding ShowList, Converter={StaticResource BoolToVis}}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" BorderThickness="0"
                       HeadersVisibility="Column" GridLinesVisibility="Horizontal" RowHeight="30" ColumnHeaderHeight="34"
                       AutomationProperties.Name="Points">
@@ -473,6 +498,7 @@
                 </DataGridTextColumn>
               </DataGrid.Columns>
             </DataGrid>
+            </Grid>
 
             <!-- Before the first scan: what to do, and the pre-flight results in full -->
             <ScrollViewer VerticalScrollBarVisibility="Auto"
