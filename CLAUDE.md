@@ -147,3 +147,33 @@ screen (window sizes in XAML are DIPs for 100% scaling). Fluent style keys used:
 SolidBackgroundFillColorTertiaryBrush, SurfaceStrokeColorFlyoutBrush, TextFillColorSecondaryBrush. Checked by driving the app with UI Automation at 1366×728 DIP in light and
 dark against the simulator. Phase B (not done): per-tool-window polish (MS/TP toolbar grouping, Lessons list wrapping, empty-state text in Watch/Compare grids, consistent
 window headers).
+
+YABE-style batch (all checked against the simulator over UDP, and in the app by UI Automation; none against a real controller):
+- Settings writes: `Writing/PropertyEdit` (pure: which properties can be edited — never Present Value/Out Of Service, which have their own controls, nor
+  reports like Status_Flags; only single values of REAL/DOUBLE/UNSIGNED/SIGNED/BOOLEAN/ENUMERATED/CHARACTER_STRING, typed from the device's own tag, kept on
+  `PropertyRow.ValueTag/ValueCount`), `PropertyWriteRequest` (confirmation with old and new value; renaming warns), `DeviceWriter.WritePropertyAsync`
+  (no priority, read-only blocked, read back, logged "set X: old -> new"). CLI `write --property high-limit --value 80`; app: a Change box under the
+  properties. Simulator `ConfigWritable` set (names, limits, deadband, COV increment, units, min/max...) and analog points now have COV_Increment.
+- Who-Has: `Discovery/WhoHas` (`IHaveCodec`: the library sends I-Have but cannot decode it; `DiscoveryService.WhoHasAsync` listens on the raw unconfirmed
+  hook). Local subnet and routed networks only, not through a BBMD (the library has only a remote Who-Is). CLI `who-has "Zone Temp" | ai:1`;
+  Find window "Ask the network".
+- Device actions: `Writing/DeviceActions` (`DeviceActionRequest`: clock (local or UTC), warm/cold start, mute = DeviceCommunicationControl disable or
+  disable-initiation, un-mute). Restart and mute need the device number typed (`PromptContent.TypeToConfirm`, `AskPassword`; `PromptWindow.Show(..., out password)`).
+  A mute always has 1-60 minutes (never "forever") and is tracked as `TrackedOverride.MutedPriority` (-1) so leaving offers to un-mute; un-mute is allowed
+  in read-only mode. Clock sync is unconfirmed, so the writer reads the device clock back. A muted device does not answer Who-Is: CLI `unmute --address`.
+  CLI `clock`, `restart --warm|--cold`, `mute [--minutes] [--initiation]`, `unmute`; app: Device actions on the device card. Simulator `--password`.
+- Live alarms: `Alarms/AlarmRecipient` encodes/decodes BACnetDestination by hand (BACprobe by address: its unicast socket `LocalEndPoint`, process id
+  0x42500001, unconfirmed, all days and transitions); sent as `TAG_CONTEXT_SPECIFIC_ENCODED` bytes via AddListElement/RemoveListElement on each
+  Notification Class's Recipient_List. `AlarmListenRequest`, `DeviceWriter.ListenForAlarmsAsync`, tracked as `AlarmRecipientPriority` (-2) for removal
+  before leaving. `DiscoveryService.AlarmNotified`: unconfirmed notifications are read from the raw hook so an event type the library cannot decode still
+  gives device and point (`AlarmNotification.FromHeader`); confirmed ones are acknowledged. BACnet/IP only. The library cannot ENCODE CHANGE_OF_RELIABILITY
+  (it can decode it), so the simulator reports faults as OUT_OF_RANGE / CHANGE_OF_STATE. CLI `alarms --listen [--minutes]`; Alarms window "Live...".
+  Simulator: Notification Class 1, points report through it, `SimulatedIpTransport` drops the library's duplicate "unrecognized service" reject after
+  the simulator answered AddListElement/RemoveListElement itself (otherwise the client sees a random refusal).
+- Structured View: `Browsing/StructuredView` (`StructureTree.ParseSubordinates`: a device id in front of an entry means "on another device";
+  `Build` nests views, cuts loops, adds "Not in any view"), `DeviceBrowser.ReadStructuredViewsAsync`. CLI `objects --tree`; app: Folders toggle in the
+  points header (only for devices with views). Simulator views use context tags like real devices.
+- Multi-point chart: `Trends/MultiTrend` (`ChartSeries` per point on `LiveTrend`; shared axis when units match, else each line across its own range;
+  CSV with a column per point). App: Watch list "Chart..." (selected rows, else the whole list, up to 8) opens `MultiTrendWindow`, which samples the watch
+  rows (no extra traffic) on a timer. Flat lines with mixed units all sit at 50 % and can overlap; the legend and hover still give each value.
+
