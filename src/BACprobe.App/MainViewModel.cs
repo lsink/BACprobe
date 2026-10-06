@@ -258,7 +258,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             }
             finally { IsExporting = false; }
         },
-        goTo: GoToPointAsync));
+        goTo: GoToPointAsync,
+        askNetwork: _svc is null ? null : (name, id) => _svc.WhoHasAsync(name, id, TimeSpan.FromSeconds(3))));
 
     /// <summary>Select a device and one of its points in the main window (used by Find). Waits for the device's objects to load.</summary>
     private async Task GoToPointAsync(uint instance, BacnetObjectId id)

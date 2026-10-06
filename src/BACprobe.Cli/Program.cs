@@ -33,6 +33,7 @@ internal static partial class Program
           bacprobe alarms    [--device <instance>] [--wait <seconds>]
           bacprobe alarms    --device <instance> --ack <type:n> [--yes]
           bacprobe find      <words...> [--device <n> | --job <file>] [--max <n>]
+          bacprobe who-has   ("<exact point name>" | <type:n>) [--low <n> --high <n>] [--wait <seconds>]
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
@@ -70,6 +71,8 @@ internal static partial class Program
         find       Search every device for points by words in the name, description, type, units or value (all words must match).
                    Quote a phrase, e.g. "supply fan". Filters, alone or with words: is:overridden, is:fault, is:alarm, is:oos
                    (out of service), is:problem (fault, alarm or out of service). --job searches a saved job offline.
+        who-has    Ask the network which device has a point, by exact name or object (e.g. ai:1): one broadcast, no need to read every
+                   device. Reaches this subnet and networks behind its routers, not other subnets through a BBMD.
         trend      Show a trend log's settings and recorded history (latest 20 records by default); --out saves all of it as CSV or Excel.
         watch      Print a line whenever a point value or override changes. Uses COV where the device supports it (--poll forces polling;
                    --interval is the polling interval, default 2 s). Ctrl+C to stop.
@@ -130,6 +133,7 @@ internal static partial class Program
                 "watch" => await WatchAsync(opts),
                 "trend" => await TrendAsync(opts),
                 "find" => await FindAsync(opts),
+                "who-has" => await WhoHasAsync(opts),
                 "routers" => await RoutersAsync(opts),
                 "bbmd" => await BbmdCheckAsync(opts),
                 "compare" => await CompareAsync(opts),

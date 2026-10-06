@@ -12,6 +12,9 @@
     </Grid.RowDefinitions>
 
     <DockPanel Grid.Row="0">
+      <Button DockPanel.Dock="Right" Content="Ask the network" Padding="14,6" Margin="10,0,0,0" Command="{Binding AskNetworkCommand}"
+              AutomationProperties.Name="Ask the network"
+              ToolTip="Who-Has: ask every device whether it has a point with exactly this name (or this object, e.g. ai:1), without reading them all. Reaches this subnet and routed networks, not other subnets through a BBMD." />
       <Button DockPanel.Dock="Right" Content="Read all devices" Padding="14,6" Margin="10,0,0,0"
               Command="{Binding ReadAllCommand}"
               ToolTip="Read every device's point list so the search covers the whole site. Devices you have already opened are included without this." />

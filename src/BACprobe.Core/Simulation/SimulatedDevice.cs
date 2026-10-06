@@ -79,8 +79,21 @@ public sealed class SimulatedDevice : IDisposable
         _client.OnWritePropertyRequest += OnWriteProperty;
         _client.OnSubscribeCOV += OnSubscribeCov;
         _client.OnReadRange += OnReadRange;
+        _client.OnWhoHas += OnWhoHas;
         _client.OnGetAlarmSummaryOrEventInformation += OnGetEventInformation;
         _client.OnAlarmAcknowledge += OnAlarmAcknowledge;
+    }
+
+    private void OnWhoHas(BacnetClient sender, BacnetAddress adr, int low, int high, BacnetObjectId? objId, string objName)
+    {
+        if (Silent) return; // pretending to be off: say nothing
+        if ((low >= 0 && Model.Instance < low) || (high >= 0 && Model.Instance > high)) return;
+        var device = new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, Model.Instance);
+        foreach (var (id, name) in Model.FindObjects(objId, objId is null ? objName : null))
+        {
+            Log?.Invoke($"[{Model.Instance}] Who-Has {(objId is { } o ? o.ToString() : $"\"{objName}\"")} from {adr} -> I-Have {id} \"{name}\"");
+            sender.IHave(device, id, name); // broadcast, as the standard says
+        }
     }
 
     /// <summary>Events per GetEventInformation answer: small, so the client has to follow the "more events" chain like it would on a busy controller.</summary>

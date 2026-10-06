@@ -597,6 +597,16 @@ public sealed class SimulatedDeviceModel
         return o.Props.TryGetValue(p, out var vals) ? vals : null;
     }
 
+    /// <summary>The objects a Who-Has asks about: by identifier, or by exact name (as BACnet names are compared).</summary>
+    public IReadOnlyList<(BacnetObjectId Id, string Name)> FindObjects(BacnetObjectId? id, string? name)
+    {
+        lock (_lock)
+            return _objects.Values
+                .Select(o => (o.Id, Name: o.Props.TryGetValue(BacnetPropertyIds.PROP_OBJECT_NAME, out var n) && n is [{ Value: string s }] ? s : ""))
+                .Where(x => id is { } want ? x.Id.Equals(want) : x.Name == name)
+                .ToList();
+    }
+
     /// <summary>Property ids to return for ALL/REQUIRED/OPTIONAL requests.</summary>
     public IList<BacnetPropertyIds> AllProperties(BacnetObjectId id)
     {

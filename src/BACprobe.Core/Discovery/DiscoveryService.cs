@@ -128,6 +128,36 @@ public sealed class DiscoveryService : IDisposable
         return _devices.Values.Where(d => InRange(d.InstanceId, low, high)).OrderBy(d => d.InstanceId).ToList();
     }
 
+    /// <summary>
+    /// Ask "who has this object?" by name or by object identifier, and collect the I-Have answers for <paramref name="wait"/>.
+    /// Goes to this subnet (and networks behind its routers); it does not go through a BBMD. -1 = no device-number limit.
+    /// </summary>
+    public async Task<IReadOnlyList<IHaveReply>> WhoHasAsync(string? name, BacnetObjectId? id, TimeSpan wait, int low = -1, int high = -1,
+        CancellationToken ct = default)
+    {
+        if (name is null == id is null) throw new ArgumentException("Look for a name or an object, not both.");
+        var replies = new ConcurrentDictionary<(uint, BacnetObjectId, string), IHaveReply>();
+        void OnRequest(BacnetClient sender, BacnetAddress adr, BacnetPduTypes type, BacnetUnconfirmedServices service, byte[] buffer, int offset, int length)
+        {
+            if (service != BacnetUnconfirmedServices.SERVICE_UNCONFIRMED_I_HAVE) return;
+            if (!IHaveCodec.TryDecode(buffer, offset, length, out var device, out var obj, out var objName)) return;
+            if (!InRange(device, low, high)) return;
+            var where = AddressInfo.Describe(adr);
+            replies.TryAdd((device, obj, where), new IHaveReply(device, obj, objName, where));
+        }
+
+        _client.OnUnconfirmedServiceRequest += OnRequest;
+        try
+        {
+            if (id is { } oid) _client.WhoHas(oid, low, high);
+            else _client.WhoHas(name!, low, high);
+            try { await Task.Delay(wait, ct); }
+            catch (OperationCanceledException) { }
+        }
+        finally { _client.OnUnconfirmedServiceRequest -= OnRequest; }
+        return [.. replies.Values.OrderBy(r => r.DeviceInstance).ThenBy(r => (int)r.Point.type).ThenBy(r => r.Point.instance)];
+    }
+
     /// <summary>True when a device number falls in a Who-Is range; -1 means no limit on that side.</summary>
     public static bool InRange(uint instance, int low, int high) =>
         (low < 0 || instance >= (uint)low) && (high < 0 || instance <= (uint)high);

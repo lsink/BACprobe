@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO.BACnet;
 using BACprobe.Core.Browsing;
+using BACprobe.Core.Discovery;
 using BACprobe.Core.Export;
 using BACprobe.Core.Search;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -8,17 +9,42 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace BACprobe.App;
 
-public sealed class FindRow(PointHit hit)
+/// <summary>One result: a point from the devices read so far, or a device's answer to Who-Has.</summary>
+public sealed class FindRow
 {
-    public PointHit Hit => hit;
-    public string Device => $"{hit.DeviceInstance}  {hit.DeviceName}";
-    public string PointId => $"{BacnetNames.ObjectTypeShort(hit.Point.Id.type)} {hit.Point.Id.instance}";
-    public string Name => hit.Point.Name ?? "-";
-    public string Value => hit.Point.ValueText;
-    public string Override => hit.Point.OverrideText;
-    public string Description => hit.Point.Description ?? "";
-    public string Status => hit.Point.ProblemText;
-    public string StatusTooltip => hit.Point.ProblemTooltip;
+    public FindRow(PointHit hit)
+    {
+        DeviceInstance = hit.DeviceInstance;
+        Point = hit.Point.Id;
+        Device = $"{hit.DeviceInstance}  {hit.DeviceName}";
+        Name = hit.Point.Name ?? "-";
+        Value = hit.Point.ValueText;
+        Override = hit.Point.OverrideText;
+        Description = hit.Point.Description ?? "";
+        Status = hit.Point.ProblemText;
+        StatusTooltip = hit.Point.ProblemTooltip;
+    }
+
+    /// <summary>An I-Have: the device says it has the point; nothing else is known until it is read.</summary>
+    public FindRow(IHaveReply reply)
+    {
+        DeviceInstance = reply.DeviceInstance;
+        Point = reply.Point;
+        Device = $"{reply.DeviceInstance}  ({reply.AddressText})";
+        Name = reply.ObjectName;
+        Description = "answered Who-Has";
+    }
+
+    public uint DeviceInstance { get; }
+    public BacnetObjectId Point { get; }
+    public string Device { get; }
+    public string PointId => $"{BacnetNames.ObjectTypeShort(Point.type)} {Point.instance}";
+    public string Name { get; }
+    public string Value { get; } = "";
+    public string Override { get; } = "";
+    public string Description { get; }
+    public string Status { get; } = "";
+    public string StatusTooltip { get; } = "";
 }
 
 /// <summary>The Find window: type words, see matching points across every device read so far, jump to one.</summary>
@@ -26,7 +52,8 @@ public sealed partial class FindViewModel(
     Func<IReadOnlyList<ExportDevice>> getIndex,
     Func<int> deviceCount,
     Func<IProgress<string>, Task<int>> readAllDevices,
-    Func<uint, BacnetObjectId, Task> goTo) : ObservableObject
+    Func<uint, BacnetObjectId, Task> goTo,
+    Func<string?, BacnetObjectId?, Task<IReadOnlyList<IHaveReply>>>? askNetwork = null) : ObservableObject
 {
     private const int MaxShown = 500;
 
@@ -37,7 +64,7 @@ public sealed partial class FindViewModel(
     [ObservableProperty] private FindRow? _selected;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ReadAllCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ReadAllCommand), nameof(AskNetworkCommand))]
     private bool _isBusy;
 
     partial void OnQueryChanged(string value) => Search();
@@ -64,6 +91,41 @@ public sealed partial class FindViewModel(
 
     private bool CanReadAll() => !IsBusy;
 
+    private bool CanAskNetwork() => !IsBusy && askNetwork is not null;
+
+    /// <summary>
+    /// Who-Has: ask every device whether it has a point with exactly this name (or this object, e.g. ai:1), without reading them.
+    /// Their answers replace the list.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAskNetwork))]
+    private async Task AskNetworkAsync()
+    {
+        var text = Query.Trim().Trim('"');
+        if (text.Length == 0 || text.Contains("is:", StringComparison.OrdinalIgnoreCase))
+        {
+            Status = "Type an exact point name (e.g. Zone Temp) or an object (e.g. ai:1) to ask the network.";
+            return;
+        }
+        var (id, name) = IHaveCodec.ParseQuery(text);
+        IsBusy = true;
+        Status = $"Asking the network who has {(id is { } o ? BacnetNames.ObjectLabel(o) : $"\"{name}\"")}...";
+        try
+        {
+            var replies = await askNetwork!(name, id);
+            Results.Clear();
+            foreach (var r in replies) Results.Add(new FindRow(r));
+            Status = replies.Count == 0
+                ? "No device said it has it. Likely cause: the name must match exactly (case and spaces), or the device is on another subnet " +
+                  "(Who-Has does not go through a BBMD). Next step: try the object (e.g. ai:1), or Read all devices and search."
+                : $"{replies.Count} answer(s) to Who-Has from {replies.Select(r => r.DeviceInstance).Distinct().Count()} device(s). Double-click one to go to it.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not ask the network: {ex.Message} Likely cause: the connection was closed. Next step: Scan again.";
+        }
+        finally { IsBusy = false; }
+    }
+
     [RelayCommand(CanExecute = nameof(CanReadAll))]
     private async Task ReadAllAsync()
     {
@@ -81,6 +143,6 @@ public sealed partial class FindViewModel(
     private async Task GoToAsync()
     {
         if (Selected is null) return;
-        await goTo(Selected.Hit.DeviceInstance, Selected.Hit.Point.Id);
+        await goTo(Selected.DeviceInstance, Selected.Point);
     }
 }
