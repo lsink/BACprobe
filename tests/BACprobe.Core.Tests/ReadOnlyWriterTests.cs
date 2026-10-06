@@ -57,6 +57,32 @@ public class ReadOnlyWriterTests
     }
 
     [Fact]
+    public async Task Restarting_muting_and_setting_the_clock_are_refused_too()
+    {
+        var (writer, log, tracker, cleanup) = Make();
+        using var _ = cleanup;
+        foreach (var kind in new[] { DeviceActionKind.WarmStart, DeviceActionKind.Mute, DeviceActionKind.SyncTime })
+        {
+            var outcome = await writer.RunDeviceActionAsync(new DeviceActionRequest(Device(), "AHU-1", kind, 10));
+            Assert.False(outcome.Success);
+            Assert.Contains("Read-only", outcome.Message);
+        }
+        Assert.Empty(tracker.Active);
+        Assert.All(log.Entries, e => Assert.Contains("read-only", e.Result));
+    }
+
+    [Fact]
+    public async Task Changing_a_setting_is_refused_too()
+    {
+        var (writer, log, _, cleanup) = Make();
+        using var _ = cleanup;
+        var outcome = await writer.WritePropertyAsync(new PropertyWriteRequest(Device(), "AHU-1", Ao1, "Damper", BacnetPropertyIds.PROP_DESCRIPTION,
+            new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_CHARACTER_STRING, "x"), "x", "Supply damper"));
+        Assert.False(outcome.Success);
+        Assert.Contains("read-only", Assert.Single(log.Entries).Result);
+    }
+
+    [Fact]
     public async Task Acknowledging_an_alarm_is_refused_too()
     {
         var (writer, log, _, cleanup) = Make();

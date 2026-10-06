@@ -249,16 +249,22 @@ public sealed class WriteLog(string? filePath = null)
 }
 
 /// <param name="Unconfirmed">The write timed out, so it may or may not have happened. Still offered for release.</param>
+/// <param name="Password">For a mute: the device password it was muted with, needed again to un-mute. Kept in memory only.</param>
 public sealed record TrackedOverride(DiscoveredDevice Device, string DeviceName, BacnetObjectId Point, string ObjectName,
-    int Priority, string ValueText, bool Unconfirmed = false)
+    int Priority, string ValueText, bool Unconfirmed = false, string? Password = null)
 {
     /// <summary>Priority 0 stands for "out of service": it has no priority slot, but must still be put back.</summary>
     public const int OutOfServicePriority = 0;
 
-    public bool IsOutOfService => Priority == OutOfServicePriority;
+    /// <summary>Priority -1 stands for "muted" (DeviceCommunicationControl): the whole device, offered for un-muting before leaving.</summary>
+    public const int MutedPriority = -1;
 
-    /// <summary>"22.5 at priority 8 (Manual Operator)", or "out of service" for an Out_Of_Service hold.</summary>
-    public string HeldAs => IsOutOfService ? "out of service" : $"{ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)})";
+    public bool IsOutOfService => Priority == OutOfServicePriority;
+    public bool IsMuted => Priority == MutedPriority;
+
+    /// <summary>"22.5 at priority 8 (Manual Operator)", "out of service", or "muted" for a device that was told to stop talking.</summary>
+    public string HeldAs => IsMuted ? $"muted ({ValueText})" : IsOutOfService ? "out of service"
+        : $"{ValueText} at priority {Priority} ({BacnetNames.PriorityName(Priority)})";
 
     public string Description =>
         $"{ObjectName} ({BacnetNames.ObjectLabel(Point)}) on device {Device.InstanceId} \"{DeviceName}\" - {HeldAs}{UnconfirmedNote}";

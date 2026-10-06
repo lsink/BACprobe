@@ -543,6 +543,31 @@
                 <TextBlock Grid.Row="7" Text="Clock" Opacity="0.75" /><TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding SelectedDevice.Clock}" />
               </Grid>
               <TextBlock Margin="0,14,0,0" Opacity="0.7" TextWrapping="Wrap" Text="Pick a point in the middle to see its value, override it, or trend it." />
+
+              <!-- Device actions: each asks first and is logged; restart and mute need the device number typed in -->
+              <Border Margin="0,16,0,0" Padding="10,8" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" CornerRadius="6"
+                      Visibility="{Binding ShowDeviceActions, Converter={StaticResource BoolToVis}}">
+                <StackPanel>
+                  <TextBlock Text="Device actions" Style="{DynamicResource BodyStrongTextBlockStyle}" />
+                  <WrapPanel Margin="0,8,0,0">
+                    <Button Content="Set clock to this PC..." Padding="12,4" Margin="0,0,6,6" Command="{Binding SyncClockCommand}"
+                            AutomationProperties.Name="Set clock" ToolTip="Send this PC's time to the device (TimeSynchronization), then read its clock back to check." />
+                    <Button Content="Warm start..." Padding="12,4" Margin="0,0,6,6" Command="{Binding WarmStartCommand}"
+                            AutomationProperties.Name="Warm start" ToolTip="Restart the controller's program, keeping its settings. You type the device number to confirm." />
+                    <Button Content="Cold start..." Padding="12,4" Margin="0,0,6,6" Command="{Binding ColdStartCommand}"
+                            AutomationProperties.Name="Cold start" ToolTip="Like a power cycle: values go back to their defaults. You type the device number to confirm." />
+                  </WrapPanel>
+                  <WrapPanel>
+                    <Button Content="Mute..." Padding="12,4" Margin="0,0,6,6" Command="{Binding MuteDeviceCommand}"
+                            AutomationProperties.Name="Mute device"
+                            ToolTip="DeviceCommunicationControl: the device stops talking on the network for the minutes chosen, then un-mutes by itself. BACprobe offers to un-mute it before you leave." />
+                    <ComboBox ItemsSource="{Binding MuteMinuteChoices}" SelectedItem="{Binding MuteMinutes}" ItemStringFormat="{}{0} min" Width="96"
+                              Margin="0,0,6,6" AutomationProperties.Name="Mute minutes" />
+                    <Button Content="Un-mute" Padding="12,4" Margin="0,0,6,6" Command="{Binding UnmuteDeviceCommand}"
+                            AutomationProperties.Name="Un-mute device" ToolTip="Let the device talk on the network again." />
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </ScrollViewer>
 

@@ -157,6 +157,93 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         }
     }
 
+    /// <summary>
+    /// Set the clock, restart, mute or un-mute a device. Refused in read-only mode except un-muting (giving control back is cleanup).
+    /// A mute is tracked like an override, so leaving offers to un-mute it. Callers must have shown the confirmation first.
+    /// </summary>
+    public async Task<WriteOutcome> RunDeviceActionAsync(DeviceActionRequest request, CancellationToken ct = default)
+    {
+        var device = request.Device;
+        var asPoint = new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, device.InstanceId);
+        if (ReadOnly && request.Kind != DeviceActionKind.Unmute)
+        {
+            LogDevice(request, false, "blocked: read-only mode");
+            return ReadOnlyOutcome;
+        }
+        if (request.Problem is { } problem) return new WriteOutcome(false, problem);
+
+        try
+        {
+            switch (request.Kind)
+            {
+                case DeviceActionKind.SyncTime or DeviceActionKind.SyncTimeUtc:
+                {
+                    // Unconfirmed: the device never says whether it took it, so look at its clock afterwards.
+                    client.SynchronizeTime(device.Address, request.Kind == DeviceActionKind.SyncTimeUtc ? DateTime.UtcNow : DateTime.Now);
+                    await Task.Delay(VerifyEvery, ct);
+                    var skew = await ReadClockSkewAsync(device, ct);
+                    device.ClockSkew = skew ?? device.ClockSkew;
+                    var msg = skew is null ? "sent (the device clock could not be read back to check)"
+                        : skew.Value.Duration() < TimeSpan.FromMinutes(1) ? "device clock is now within a minute of this PC"
+                        : $"sent, but the device clock is still {DeviceHealth.DescribeSkew(skew.Value)}: it may ignore time sync, or use another time zone";
+                    var worked = skew is null || skew.Value.Duration() < TimeSpan.FromMinutes(1);
+                    LogDevice(request, worked, msg);
+                    return new WriteOutcome(worked, msg);
+                }
+                case DeviceActionKind.WarmStart or DeviceActionKind.ColdStart:
+                    await client.ReinitializeAsync(device.Address,
+                        request.Kind == DeviceActionKind.ColdStart ? BacnetReinitializedStates.BACNET_REINIT_COLDSTART : BacnetReinitializedStates.BACNET_REINIT_WARMSTART,
+                        request.Password ?? "", cancellationToken: ct);
+                    LogDevice(request, true, "device accepted; it is restarting");
+                    return new WriteOutcome(true, "The device accepted and is restarting. Give it a minute, then Scan to see it again.");
+                default:
+                {
+                    var enableDisable = request.Kind switch { DeviceActionKind.Mute => 1u, DeviceActionKind.MuteInitiation => 2u, _ => 0u };
+                    await client.DeviceCommunicationControlAsync(device.Address, request.IsMute ? request.Minutes : 0, enableDisable,
+                        request.Password ?? "", cancellationToken: ct);
+                    if (request.IsMute)
+                        tracker.Record(new TrackedOverride(device, request.DeviceName, asPoint, request.DeviceName, TrackedOverride.MutedPriority,
+                            request.Kind == DeviceActionKind.Mute ? $"for {request.Minutes} min" : $"sends nothing on its own, for {request.Minutes} min",
+                            Password: request.Password));
+                    else tracker.Remove(device.InstanceId, asPoint, TrackedOverride.MutedPriority);
+                    var msg = request.IsMute ? $"muted for {request.Minutes} minutes" : "talking again";
+                    LogDevice(request, true, msg);
+                    return new WriteOutcome(true, msg);
+                }
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            var text = DeviceActionErrors.Explain(ex);
+            LogDevice(request, false, text.Summary);
+            // A timed-out mute may still have landed: offer to undo it when leaving.
+            if (request.IsMute && WriteErrors.IsTimeout(ex))
+                tracker.Record(new TrackedOverride(device, request.DeviceName, asPoint, request.DeviceName, TrackedOverride.MutedPriority,
+                    $"for {request.Minutes} min", Unconfirmed: true, Password: request.Password));
+            return new WriteOutcome(false, text.Full);
+        }
+    }
+
+    /// <summary>Device clock minus PC clock, or null if the device will not say.</summary>
+    private async Task<TimeSpan?> ReadClockSkewAsync(DiscoveredDevice device, CancellationToken ct)
+    {
+        try
+        {
+            var oid = new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, device.InstanceId);
+            var date = await client.ReadPropertyAsync(device.Address, oid, BacnetPropertyIds.PROP_LOCAL_DATE, cancellationToken: ct);
+            var time = await client.ReadPropertyAsync(device.Address, oid, BacnetPropertyIds.PROP_LOCAL_TIME, cancellationToken: ct);
+            var pcNow = DateTime.Now;
+            return DeviceHealth.CombineClock(date is [{ Value: DateTime d }] ? d : null, time is [{ Value: DateTime t }] ? t : null) is { } clock
+                ? clock - pcNow
+                : null;
+        }
+        catch (Exception) when (!ct.IsCancellationRequested) { return null; }
+    }
+
+    private void LogDevice(DeviceActionRequest r, bool success, string result) =>
+        log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Device.InstanceId, r.DeviceName, $"device {r.Device.InstanceId}", r.LogAction,
+            Priority: 0, success, result)); // a device action has no priority
+
     private void LogProperty(PropertyWriteRequest r, bool success, string result) =>
         log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Device.InstanceId, r.DeviceName, r.ObjectLabel, r.LogAction,
             Priority: 0, success, result)); // a configuration change has no priority
@@ -233,7 +320,9 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
         int ok = 0, bad = 0;
         foreach (var o in tracker.Active)
         {
-            var outcome = o.IsOutOfService
+            var outcome = o.IsMuted
+                ? await RunDeviceActionAsync(new DeviceActionRequest(o.Device, o.DeviceName, DeviceActionKind.Unmute, Password: o.Password), ct)
+                : o.IsOutOfService
                 ? await SetOutOfServiceAsync(new OutOfServiceRequest(o.Device, o.DeviceName, o.Point, o.ObjectName, TurnOn: false), ct)
                 : await ExecuteAsync(new WriteRequest(o.Device, o.DeviceName, o.Point, o.ObjectName, null, "release", o.Priority), ct);
             if (outcome.Success) ok++; else bad++;

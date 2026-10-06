@@ -366,7 +366,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Read-only mode: browsing and reading only. The override panel is hidden and writes are refused.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(WindowTitle), nameof(ShowPropertyEditor))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(WindowTitle), nameof(ShowPropertyEditor), nameof(ShowDeviceActions))]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
     private bool _readOnlyMode = AppSettings.Current.ReadOnly;
 
@@ -439,7 +439,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowDeviceCard))]
+    [NotifyPropertyChangedFor(nameof(ShowDeviceCard), nameof(ShowDeviceActions))]
     private DeviceRow? _selectedDevice;
 
     [ObservableProperty]
@@ -1403,6 +1403,45 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var outcome = await _writer.WritePropertyAsync(request);
         Status = outcome.Success ? $"{prop.Name} changed: the {outcome.Message}." : outcome.Message.Replace("\n", " ");
         await LoadPropertiesAsync(row);
+    }
+
+    // Device actions on the selected device: set its clock, restart it, mute or un-mute it.
+    /// <summary>Set by the window: confirm a device action; returns whether to go ahead, and the password typed (if any).</summary>
+    public Func<DeviceActionRequest, (bool Go, string? Password)> ConfirmDeviceAction { get; set; } = _ => (false, null);
+
+    public IReadOnlyList<int> MuteMinuteChoices { get; } = [5, 10, 15, 30, 60];
+    [ObservableProperty] private int _muteMinutes = (int)DeviceActionRequest.DefaultMuteMinutes;
+
+    /// <summary>The device card's actions: shown when connected and not read-only.</summary>
+    public bool ShowDeviceActions => _svc is not null && !ReadOnlyMode;
+
+    [RelayCommand] private Task SyncClockAsync() => DeviceActionAsync(DeviceActionKind.SyncTime);
+    [RelayCommand] private Task WarmStartAsync() => DeviceActionAsync(DeviceActionKind.WarmStart);
+    [RelayCommand] private Task ColdStartAsync() => DeviceActionAsync(DeviceActionKind.ColdStart);
+    [RelayCommand] private Task MuteDeviceAsync() => DeviceActionAsync(DeviceActionKind.Mute);
+    [RelayCommand] private Task UnmuteDeviceAsync() => DeviceActionAsync(DeviceActionKind.Unmute);
+
+    private async Task DeviceActionAsync(DeviceActionKind kind)
+    {
+        var deviceRow = SelectedDevice;
+        if (_writer is null || _svc is null || deviceRow is null) return;
+        if (ReadOnlyMode && kind != DeviceActionKind.Unmute)
+        {
+            Status = "Read-only mode is on, so nothing was sent. Switch Read-only off in the toolbar first.";
+            return;
+        }
+        var name = deviceRow.Name == "-" ? $"device {deviceRow.Instance}" : deviceRow.Name;
+        var request = new DeviceActionRequest(deviceRow.Device, name, kind, (uint)MuteMinutes);
+        var (go, password) = ConfirmDeviceAction(request);
+        if (!go)
+        {
+            Status = "Cancelled. Nothing was sent.";
+            return;
+        }
+        var outcome = await _writer.RunDeviceActionAsync(request with { Password = password });
+        Status = outcome.Success ? $"{name}: {outcome.Message.TrimEnd('.')}." : outcome.Message.Replace("\n", " ");
+        deviceRow.Refresh(); // the clock column, after a time sync
+        UpdateOverrideSummary(); // a mute counts as something left in place
     }
 
     /// <summary>

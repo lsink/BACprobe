@@ -39,9 +39,17 @@ public sealed class SimulatedDevice : IDisposable
     }
 
     private DateTime _silentUntil = DateTime.MinValue;
+    private DateTime _mutedUntil = DateTime.MinValue;
+    private bool _muteInitiationOnly;
 
-    /// <summary>True while the device is pretending to be off (see <see cref="GoSilent"/>).</summary>
-    private bool Silent => DateTime.UtcNow < _silentUntil;
+    /// <summary>True while restarting (see <see cref="GoSilent"/>) or muted by DeviceCommunicationControl: it answers nothing.</summary>
+    private bool Silent => DateTime.UtcNow < _silentUntil || (DateTime.UtcNow < _mutedUntil && !_muteInitiationOnly);
+
+    /// <summary>True while it may not send anything of its own (COV notifications), muted fully or for initiation only.</summary>
+    private bool InitiationMuted => DateTime.UtcNow < _mutedUntil;
+
+    /// <summary>If set, restarts and communication control must carry this password, like a protected controller.</summary>
+    public string? Password { get; set; }
 
     /// <summary>
     /// Stop answering anything for a while, then come back having forgotten every COV subscription: like a controller
@@ -80,8 +88,55 @@ public sealed class SimulatedDevice : IDisposable
         _client.OnSubscribeCOV += OnSubscribeCov;
         _client.OnReadRange += OnReadRange;
         _client.OnWhoHas += OnWhoHas;
+        _client.OnTimeSynchronize += OnTimeSynchronize;
+        _client.OnDeviceCommunicationControl += OnCommunicationControl;
+        _client.OnReinitializedDevice += OnReinitialize;
         _client.OnGetAlarmSummaryOrEventInformation += OnGetEventInformation;
         _client.OnAlarmAcknowledge += OnAlarmAcknowledge;
+    }
+
+    private void OnTimeSynchronize(BacnetClient sender, BacnetAddress adr, DateTime dateTime, bool utc)
+    {
+        if (Silent) return;
+        var local = utc ? DateTime.SpecifyKind(dateTime, DateTimeKind.Utc).ToLocalTime() : dateTime;
+        Model.ClockSkew = local - DateTime.Now; // its clock now reads what it was sent, as a synced device would
+        Log?.Invoke($"[{Model.Instance}] {(utc ? "UTC time" : "Time")} synchronization from {adr}: clock set to {local:HH:mm:ss}");
+    }
+
+    // Communication control and restarts are answered even while muted: that is how a muted device is un-muted.
+    private void OnCommunicationControl(BacnetClient sender, BacnetAddress adr, byte invokeId, uint minutes, uint enableDisable, string password,
+        BacnetMaxSegments maxSegments)
+    {
+        if (DateTime.UtcNow < _silentUntil) return; // restarting
+        if (!PasswordOk(sender, adr, invokeId, BacnetConfirmedServices.SERVICE_CONFIRMED_DEVICE_COMMUNICATION_CONTROL, password)) return;
+        sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_DEVICE_COMMUNICATION_CONTROL, invokeId);
+        if (enableDisable == 0) _mutedUntil = DateTime.MinValue;
+        else
+        {
+            _muteInitiationOnly = enableDisable == 2;
+            _mutedUntil = minutes == 0 ? DateTime.MaxValue : DateTime.UtcNow.AddMinutes(minutes);
+        }
+        Log?.Invoke($"[{Model.Instance}] DeviceCommunicationControl from {adr}: " +
+                    (enableDisable == 0 ? "enabled" : $"{(enableDisable == 2 ? "initiation disabled" : "disabled")} for {(minutes == 0 ? "ever" : $"{minutes} min")}"));
+    }
+
+    private void OnReinitialize(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetReinitializedStates state, string password,
+        BacnetMaxSegments maxSegments)
+    {
+        if (DateTime.UtcNow < _silentUntil) return;
+        if (!PasswordOk(sender, adr, invokeId, BacnetConfirmedServices.SERVICE_CONFIRMED_REINITIALIZE_DEVICE, password)) return;
+        sender.SimpleAckResponse(adr, BacnetConfirmedServices.SERVICE_CONFIRMED_REINITIALIZE_DEVICE, invokeId);
+        Log?.Invoke($"[{Model.Instance}] ReinitializeDevice ({state}) from {adr}");
+        _mutedUntil = DateTime.MinValue; // a restart clears communication control
+        GoSilent(TimeSpan.FromSeconds(state == BacnetReinitializedStates.BACNET_REINIT_COLDSTART ? 8 : 4));
+    }
+
+    private bool PasswordOk(BacnetClient sender, BacnetAddress adr, byte invokeId, BacnetConfirmedServices service, string? password)
+    {
+        if (Password is null || Password == password) return true;
+        Log?.Invoke($"[{Model.Instance}] {service} from {adr} -> wrong password");
+        sender.ErrorResponse(adr, service, invokeId, BacnetErrorClasses.ERROR_CLASS_SECURITY, BacnetErrorCodes.ERROR_CODE_PASSWORD_FAILURE);
+        return false;
     }
 
     private void OnWhoHas(BacnetClient sender, BacnetAddress adr, int low, int high, BacnetObjectId? objId, string objName)
@@ -340,6 +395,7 @@ public sealed class SimulatedDevice : IDisposable
     /// <summary>Send a notification for every subscription whose point moved enough since it was last reported.</summary>
     private void CheckCov()
     {
+        if (InitiationMuted || Silent) return; // told not to send anything on its own
         List<CovSub> subs;
         lock (_subsLock)
         {

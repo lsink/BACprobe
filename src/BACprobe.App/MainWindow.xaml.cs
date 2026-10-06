@@ -106,6 +106,23 @@ public partial class MainWindow : Window
                     return false;
                 }
             };
+            vm.ConfirmDeviceAction = request =>
+            {
+                try
+                {
+                    // Restarts and mutes start with Cancel focused, and the confirm button stays off until the device number is typed.
+                    var choice = PromptWindow.Show(this, Prompts.ForDeviceAction(request),
+                        [new PromptButton(request.ConfirmLabel), new PromptButton("Cancel", IsCancel: true)], out var password,
+                        focusIndex: request.Warning is null ? 0 : 1);
+                    return (choice == 0, password);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "BACprobe could not show the confirmation, so nothing was sent." + Environment.NewLine + Environment.NewLine + ex.Message,
+                        "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return (false, null);
+                }
+            };
             vm.ConfirmPropertyWrite = request =>
             {
                 try

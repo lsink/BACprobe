@@ -10,6 +10,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <TextBlock Grid.Row="0" Text="{Binding Headline}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -38,7 +39,19 @@
       <TextBlock Text="{Binding Warning}" TextWrapping="Wrap" FontWeight="SemiBold" />
     </Border>
 
+    <!-- Expert actions: type the device number to unlock the button; and the device password, if it has one -->
+    <StackPanel Grid.Row="4" Margin="0,14,0,0">
+      <StackPanel Visibility="{Binding TypeVisibility}">
+        <TextBlock Text="{Binding TypePrompt}" TextWrapping="Wrap" />
+        <TextBox x:Name="TypeBox" Margin="0,4,0,0" AutomationProperties.Name="Type to confirm" TextChanged="OnTypeChanged" />
+      </StackPanel>
+      <StackPanel Visibility="{Binding PasswordVisibility}" Margin="0,10,0,0">
+        <TextBlock Text="Device password (leave empty if it has none)" />
+        <PasswordBox x:Name="PasswordBox" Margin="0,4,0,0" AutomationProperties.Name="Device password" />
+      </StackPanel>
+    </StackPanel>
+
     <!-- Buttons are added in code: the caller says what each one does -->
-    <StackPanel x:Name="ButtonPanel" Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0" />
+    <StackPanel x:Name="ButtonPanel" Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0" />
   </Grid>
 </Window>

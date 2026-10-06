@@ -6,12 +6,16 @@ namespace BACprobe.Core.Writing;
 /// What a confirmation dialog says, independent of how it is drawn: a title, a one-line question, labelled
 /// details to check, an explanation, and an optional red warning. Every dialog in the app is built from this.
 /// </summary>
+/// <param name="TypeToConfirm">For expert actions: the confirm button stays off until this text (the device number) is typed.</param>
+/// <param name="AskPassword">Show a password box (some devices protect restarts and communication control with one).</param>
 public sealed record PromptContent(
     string Title,
     string Headline,
     IReadOnlyList<ConfirmFact> Facts,
     string Body,
-    string? Warning = null);
+    string? Warning = null,
+    string? TypeToConfirm = null,
+    bool AskPassword = false);
 
 /// <summary>Wording for the app's confirmations, kept here so it is consistent and testable.</summary>
 public static class Prompts
@@ -48,6 +52,9 @@ public static class Prompts
         "Likely cause: the device stopped answering or the network dropped (the write log has the exact reason). " +
         "Next step: go back and try again, or release it from the controller's own tool.",
         "If you continue, those points stay overridden on the device until someone releases them.");
+
+    public static PromptContent ForDeviceAction(DeviceActionRequest r) =>
+        new(r.Title, r.Headline, r.Facts, r.Consequence, r.Warning, r.TypeToConfirm, r.MayNeedPassword);
 
     public static PromptContent ForPropertyWrite(PropertyWriteRequest r) => new("Change a property", r.Headline, r.Facts, r.Consequence, r.Warning);
 

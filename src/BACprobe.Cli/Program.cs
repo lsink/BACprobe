@@ -15,7 +15,7 @@ internal static partial class Program
           bacprobe adapters
           bacprobe preflight [--adapter <ip>]
           bacprobe discover  [--adapter <ip>] [--low <n> --high <n>] [--wait <seconds>] [--no-details] [--job <site.bacprobe>] [--bbmd <ip[:port]> [--ttl <s>]]
-          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--no-events] [--skew <minutes>] [--differ] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
+          bacprobe simulate  [--adapter <ip>] [--devices <n>] [--first <instance>] [--no-rpm] [--no-cov] [--cov-limit <n>] [--router <net:devices,...;...>] [--dup] [--unassigned] [--stuck] [--protected] [--still] [--objects <n>] [--outage <after,seconds>] [--faults] [--no-events] [--skew <minutes>] [--password <p>] [--differ] [--bbmd [--bbmd-refuse] [--bbmd-port <n>] [--bbmd-peer]]
           bacprobe objects   --device <instance> [--adapter <ip>]
           bacprobe read      --device <instance> --object <type:n> [--property <name>] [--adapter <ip>]
           bacprobe job save  --out <site.bacprobe> (--all | --device <n>) [--name <text>] [--notes <text>] [--bbmd <ip>] [--force]
@@ -39,6 +39,10 @@ internal static partial class Program
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
           bacprobe write     --device <instance> --object <type:n> --property <name> --value <v> [--yes]
           bacprobe release   --device <instance> --object <type:n> [--priority 8] [--yes]
+          bacprobe clock     --device <instance> [--utc] [--yes]
+          bacprobe restart   --device <instance> (--warm | --cold) [--password <p>] [--yes]
+          bacprobe mute      --device <instance> [--minutes 10] [--initiation] [--password <p>] [--yes]
+          bacprobe unmute    --device <instance> [--address <ip[:port]>] [--password <p>] [--yes]
 
         --adapter  IPv4 address of the NIC to use (default: the only usable adapter, else you must choose).
         --low/--high  Limit Who-Is to a device instance range.
@@ -80,6 +84,12 @@ internal static partial class Program
                    With --property it changes a setting instead (high-limit, description, cov-increment...): no priority, nothing to
                    release, and the old value goes in the write log.
                    release gives it back. Every write is logged to %LOCALAPPDATA%BACprobewrite-log.txt.
+        clock      Set a device's clock to this PC's time (TimeSynchronization; --utc sends UTC for devices with their own UTC offset),
+                   then read it back to check.
+        restart    ReinitializeDevice: --warm restarts the program keeping its settings, --cold is like a power cycle. You type the device
+                   number to confirm. Some devices need --password.
+        mute       DeviceCommunicationControl: the device stops talking on the network for --minutes (1-60, default 10; never "forever"),
+                   or with --initiation it still answers but sends nothing on its own. unmute undoes it. You type the device number to confirm.
         --bbmd     Register as a foreign device with a BBMD so Who-Is reaches other subnets (objects/read/write accept it too).
                    --ttl is how long the BBMD keeps you (default 300 s); BACprobe renews automatically.
         job        Keep a site visit in one file. 'job save' reads the devices and points and stores them (plus any
@@ -103,6 +113,7 @@ internal static partial class Program
                    --no-events makes the first device refuse GetEventInformation, so 'alarms' falls back to the points' status.
                    --differ makes the second device differ from the first (Zone Setpoint 68, an extra point), to try 'bacprobe compare'.
                    --skew 47 sets the first device's clock 47 minutes ahead of this PC, for the device clock check.
+                   --password p makes every device ask for that password before a restart or mute.
                    --still stops the sensors drifting (by default analog inputs wander and Fan Status follows Fan Command).
                    --bbmd also runs a fake BBMD (port 47809); --bbmd-refuse makes it refuse registrations. --bbmd-peer adds a second
                    BBMD (next port) with table mistakes for 'bacprobe bbmd' to find: listed one-hop, and it does not list the first back.
@@ -145,6 +156,10 @@ internal static partial class Program
                 "job" => await JobAsync(opts),
                 "write" => await WriteAsync(opts),
                 "release" => await ReleaseAsync(opts),
+                "clock" => await ClockAsync(opts),
+                "restart" => await RestartAsync(opts),
+                "mute" => await MuteAsync(opts),
+                "unmute" => await UnmuteAsync(opts),
                 _ => Fail($"Unknown command '{args[0]}'.\n\n{Usage}"),
             };
         }
@@ -307,6 +322,7 @@ internal static partial class Program
                     supportCov: !(opts.ContainsKey("no-cov") && i == count - 1), covLimit: IntOpt(opts, "cov-limit", 0),
                     supportEvents: !(opts.ContainsKey("no-events") && i == 0))
                 {
+                    Password = opts.GetValueOrDefault("password"),
                     Log = line => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"),
                 };
                 sim.Start();
