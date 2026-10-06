@@ -106,6 +106,22 @@ public partial class MainWindow : Window
                     return false;
                 }
             };
+            vm.ConfirmPropertyWrite = request =>
+            {
+                try
+                {
+                    // Renaming a point starts with Cancel focused: other systems may find it by name.
+                    return PromptWindow.Show(this, Prompts.ForPropertyWrite(request),
+                        [new PromptButton(request.ConfirmLabel), new PromptButton("Cancel", IsCancel: true)],
+                        focusIndex: request.Warning is null ? 0 : 1) == 0;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "BACprobe could not show the confirmation, so nothing was written." + Environment.NewLine + Environment.NewLine + ex.Message,
+                        "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return false;
+                }
+            };
             vm.ConfirmOutOfService = request =>
             {
                 try

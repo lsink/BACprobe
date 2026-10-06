@@ -147,7 +147,7 @@ internal static partial class Program
 
         if (!PropertyEdit.CanEdit(current, out var why)) return Fail($"{current.Name} cannot be changed here. {why}");
         if (!PropertyEdit.TryParse(current.ValueTag!.Value, valueText, out var value, out var parseError))
-            return Fail($"{parseError} {current.Name} takes {PropertyEdit.KindHint(current.ValueTag.Value)}.");
+            return Fail($"{parseError} Nothing was written.");
 
         var shown = BacnetNames.FormatValues(id.type, prop, [value]);
         var request = new PropertyWriteRequest(device, deviceName, id, pointName, prop, value, shown, current.Display);

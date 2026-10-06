@@ -619,7 +619,22 @@
           <DockPanel Grid.Row="1" Margin="14,4,14,0" Visibility="{Binding ShowPointDetail, Converter={StaticResource BoolToVis}}">
             <TextBlock DockPanel.Dock="Top" Text="{Binding PropertiesHeader}" Style="{DynamicResource BodyStrongTextBlockStyle}" Margin="0,0,0,4"
                        TextTrimming="CharacterEllipsis" />
-            <DataGrid ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="90"
+            <!-- Change the selected property (a setting, not an override): hidden in read-only mode -->
+            <Border DockPanel.Dock="Bottom" Margin="0,6,0,0" Padding="10,8" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
+                    CornerRadius="6" Visibility="{Binding ShowPropertyEditor, Converter={StaticResource BoolToVis}}">
+              <StackPanel>
+                <TextBlock Text="{Binding PropertyEditTitle}" Style="{DynamicResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                <DockPanel Margin="0,6,0,0">
+                  <Button DockPanel.Dock="Right" Content="Change..." Padding="14,4" Margin="8,0,0,0" Command="{Binding EditPropertyCommand}"
+                          AutomationProperties.Name="Change property"
+                          ToolTip="Change this setting on the controller. Asks you to confirm first; the old value goes in the write log." />
+                  <TextBox Text="{Binding PropertyEditText, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="New property value" />
+                </DockPanel>
+                <TextBlock Text="{Binding PropertyEditHint}" TextWrapping="Wrap" Opacity="0.75" Margin="0,4,0,0" />
+              </StackPanel>
+            </Border>
+            <DataGrid ItemsSource="{Binding Properties}" SelectedItem="{Binding SelectedProperty}" SelectionMode="Single"
+                      AutoGenerateColumns="False" IsReadOnly="True" MinHeight="90"
                       HeadersVisibility="None" GridLinesVisibility="Horizontal" RowHeight="28" AutomationProperties.Name="Properties">
               <DataGrid.Columns>
                 <DataGridTextColumn Binding="{Binding Name}" Width="150">

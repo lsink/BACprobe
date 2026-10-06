@@ -75,7 +75,7 @@ public static class PropertyEdit
         BacnetApplicationTags.BACNET_APPLICATION_TAG_UNSIGNED_INT => "a whole number, 0 or more",
         BacnetApplicationTags.BACNET_APPLICATION_TAG_SIGNED_INT => "a whole number",
         BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN => "true or false",
-        BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED => "the number of the choice (the value shown in brackets)",
+        BacnetApplicationTags.BACNET_APPLICATION_TAG_ENUMERATED => "the number of the choice (for example 64 for degrees Fahrenheit)",
         _ => "text",
     };
 

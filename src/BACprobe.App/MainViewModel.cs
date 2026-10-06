@@ -365,7 +365,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Read-only mode: browsing and reading only. The override panel is hidden and writes are refused.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(WindowTitle))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(WindowTitle), nameof(ShowPropertyEditor))]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
     private bool _readOnlyMode = AppSettings.Current.ReadOnly;
 
@@ -1341,6 +1341,67 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             await LoadPropertiesAsync(row);
         }
         catch (Exception) { Status += " (Could not read the point back; check it before you leave.)"; }
+    }
+
+    // Changing a setting (a limit, the description, the COV increment...) of the selected point, from the properties list.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowPropertyEditor), nameof(PropertyEditTitle))]
+    [NotifyCanExecuteChangedFor(nameof(EditPropertyCommand))]
+    private PropertyRow? _selectedProperty;
+
+    [ObservableProperty] private string _propertyEditText = "";
+    [ObservableProperty] private string _propertyEditHint = "";
+
+    /// <summary>Set by the window: confirm changing a setting.</summary>
+    public Func<PropertyWriteRequest, bool> ConfirmPropertyWrite { get; set; } = _ => false;
+
+    /// <summary>The edit box under the properties: for a selected property, when connected and not read-only.</summary>
+    public bool ShowPropertyEditor => SelectedProperty is not null && _svc is not null && !ReadOnlyMode;
+    public string PropertyEditTitle => SelectedProperty is { } p ? $"Change {p.Name}" : "";
+
+    partial void OnSelectedPropertyChanged(PropertyRow? value)
+    {
+        if (value is null) return;
+        var editable = PropertyEdit.CanEdit(value, out var reason);
+        // Start from the current value; for a choice ("Degrees Fahrenheit (64)") the number is what the device needs.
+        PropertyEditText = editable ? value.Display : "";
+        PropertyEditHint = editable ? $"Type {PropertyEdit.KindHint(value.ValueTag!.Value)}." : reason;
+    }
+
+    private bool CanEditProperty() => SelectedProperty is { } p && PropertyEdit.CanEdit(p, out _);
+
+    [RelayCommand(CanExecute = nameof(CanEditProperty))]
+    private async Task EditPropertyAsync()
+    {
+        var row = SelectedObject;
+        var deviceRow = SelectedDevice;
+        var prop = SelectedProperty;
+        if (_writer is null || _svc is null || row is null || deviceRow is null || prop?.ValueTag is not { } tag) return;
+        if (ReadOnlyMode)
+        {
+            Status = "Read-only mode is on, so nothing was written. Switch Read-only off in the toolbar to change settings.";
+            return;
+        }
+        if (!PropertyEdit.TryParse(tag, PropertyEditText, out var value, out var error))
+        {
+            Status = $"{error} Nothing was written.";
+            return;
+        }
+
+        var obj = row.Summary;
+        var deviceName = deviceRow.Name == "-" ? $"device {deviceRow.Instance}" : deviceRow.Name;
+        var id = (BacnetPropertyIds)prop.PropertyId;
+        var request = new PropertyWriteRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label, id, value,
+            BacnetNames.FormatValues(obj.Id.type, id, [value]), prop.Display);
+        if (!ConfirmPropertyWrite(request))
+        {
+            Status = "Cancelled. Nothing was written.";
+            return;
+        }
+
+        var outcome = await _writer.WritePropertyAsync(request);
+        Status = outcome.Success ? $"{prop.Name} changed: the {outcome.Message}." : outcome.Message.Replace("\n", " ");
+        await LoadPropertiesAsync(row);
     }
 
     /// <summary>
