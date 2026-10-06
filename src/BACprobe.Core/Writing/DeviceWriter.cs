@@ -1,4 +1,5 @@
 using System.IO.BACnet;
+using BACprobe.Core.Browsing;
 using BACprobe.Core.Discovery;
 
 namespace BACprobe.Core.Writing;
@@ -122,6 +123,43 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
             return new WriteOutcome(false, text.Full);
         }
     }
+
+    /// <summary>
+    /// Change one configuration property (no priority). Refused in read-only mode, logged with the old and new value, and read back.
+    /// Callers must have shown the user the confirmation first.
+    /// </summary>
+    public async Task<WriteOutcome> WritePropertyAsync(PropertyWriteRequest request, CancellationToken ct = default)
+    {
+        if (ReadOnly)
+        {
+            LogProperty(request, false, "blocked: read-only mode");
+            return ReadOnlyOutcome;
+        }
+        try
+        {
+            await client.WritePropertyAsync(request.Device.Address, request.Point, request.Property, [request.Value], cancellationToken: ct);
+            string after;
+            try
+            {
+                var back = await client.ReadPropertyAsync(request.Device.Address, request.Point, request.Property, cancellationToken: ct);
+                after = BacnetNames.FormatValues(request.Point.type, request.Property, back);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested) { after = "(could not read it back)"; }
+            var msg = $"device accepted it; it now reads {after}";
+            LogProperty(request, true, msg);
+            return new WriteOutcome(true, msg);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            var text = WriteErrors.Explain(ex);
+            LogProperty(request, false, text.Summary);
+            return new WriteOutcome(false, text.Full);
+        }
+    }
+
+    private void LogProperty(PropertyWriteRequest r, bool success, string result) =>
+        log.Add(new WriteLogEntry(DateTimeOffset.Now, r.Device.InstanceId, r.DeviceName, r.ObjectLabel, r.LogAction,
+            Priority: 0, success, result)); // a configuration change has no priority
 
     /// <summary>
     /// Acknowledge one alarm. It changes nothing on the point, but it does change what the site's operators see, so it is

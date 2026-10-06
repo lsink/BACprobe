@@ -36,6 +36,7 @@ internal static partial class Program
           bacprobe trend     --device <instance> --object tl:<n> [--last <n> | --all] [--out <file.csv|xlsx>] [--force]
           bacprobe watch     --device <instance> [--object <type:n>] [--interval <seconds>] [--poll] [--cov-lifetime <seconds>]
           bacprobe write     --device <instance> --object <type:n> --value <v> [--priority 8] [--yes]
+          bacprobe write     --device <instance> --object <type:n> --property <name> --value <v> [--yes]
           bacprobe release   --device <instance> --object <type:n> [--priority 8] [--yes]
 
         --adapter  IPv4 address of the NIC to use (default: the only usable adapter, else you must choose).
@@ -73,6 +74,8 @@ internal static partial class Program
         watch      Print a line whenever a point value or override changes. Uses COV where the device supports it (--poll forces polling;
                    --interval is the polling interval, default 2 s). Ctrl+C to stop.
         write      Overrides a point (asks you to confirm in plain English; default priority 8 = Manual Operator).
+                   With --property it changes a setting instead (high-limit, description, cov-increment...): no priority, nothing to
+                   release, and the old value goes in the write log.
                    release gives it back. Every write is logged to %LOCALAPPDATA%BACprobewrite-log.txt.
         --bbmd     Register as a foreign device with a BBMD so Who-Is reaches other subnets (objects/read/write accept it too).
                    --ttl is how long the BBMD keeps you (default 300 s); BACprobe renews automatically.

@@ -284,6 +284,7 @@ public sealed class SimulatedDeviceModel
         Set(o, BacnetPropertyIds.PROP_DESCRIPTION, Str(description));
         Set(o, BacnetPropertyIds.PROP_PRESENT_VALUE, Real(value));
         Set(o, BacnetPropertyIds.PROP_UNITS, Enum((uint)units));
+        Set(o, BacnetPropertyIds.PROP_COV_INCREMENT, Real(0.2f)); // a typical setting a tech changes: how far it moves before it is reported
         Set(o, BacnetPropertyIds.PROP_OUT_OF_SERVICE, new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_BOOLEAN, false));
         if (commandable) MakeCommandable(o, Real(value));
     }
@@ -646,6 +647,36 @@ public sealed class SimulatedDeviceModel
         }
     }
 
+    /// <summary>Properties a controller lets you change: names, descriptions, limits, COV increment, units. Everything else is read-only.</summary>
+    private static readonly HashSet<BacnetPropertyIds> ConfigWritable =
+    [
+        BacnetPropertyIds.PROP_OBJECT_NAME, BacnetPropertyIds.PROP_DESCRIPTION, BacnetPropertyIds.PROP_HIGH_LIMIT, BacnetPropertyIds.PROP_LOW_LIMIT,
+        BacnetPropertyIds.PROP_DEADBAND, BacnetPropertyIds.PROP_COV_INCREMENT, BacnetPropertyIds.PROP_UNITS, BacnetPropertyIds.PROP_MIN_PRES_VALUE,
+        BacnetPropertyIds.PROP_MAX_PRES_VALUE, BacnetPropertyIds.PROP_INACTIVE_TEXT, BacnetPropertyIds.PROP_ACTIVE_TEXT,
+        BacnetPropertyIds.PROP_RELINQUISH_DEFAULT, BacnetPropertyIds.PROP_NOTIFICATION_CLASS,
+    ];
+
+    /// <summary>A configuration write: allowed for <see cref="ConfigWritable"/>, and only with a value of the property's own type.</summary>
+    private SimError? WriteConfig(SimObject o, BacnetPropertyIds prop, BacnetValue value, out string summary)
+    {
+        summary = "";
+        if (!ConfigWritable.Contains(prop) || _locked.Contains(o.Id))
+            return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
+        if (o.Props[prop] is not [var current] || current.Tag != value.Tag)
+            return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_INVALID_DATA_TYPE);
+        if (prop == BacnetPropertyIds.PROP_RELINQUISH_DEFAULT) o.RelinquishDefault = value;
+        Set(o, prop, value);
+        if (o.Event is { } e)
+        {
+            if (prop == BacnetPropertyIds.PROP_HIGH_LIMIT && value.Value is float h) e.High = h;
+            if (prop == BacnetPropertyIds.PROP_LOW_LIMIT && value.Value is float l) e.Low = l;
+            if (prop == BacnetPropertyIds.PROP_DEADBAND && value.Value is float d) e.Deadband = d;
+            EvaluateEvent(o);
+        }
+        summary = $"set {prop} to {value.Value}";
+        return null;
+    }
+
     /// <summary>Returns null on success, otherwise the BACnet error to send. Priority 0 means "not given" (16).</summary>
     public SimError? Write(BacnetObjectId id, BacnetPropertyIds prop, BacnetValue value, int priority, out string summary)
     {
@@ -667,7 +698,7 @@ public sealed class SimulatedDeviceModel
                 return null;
             }
             if (prop != BacnetPropertyIds.PROP_PRESENT_VALUE)
-                return new SimError(BacnetErrorClasses.ERROR_CLASS_PROPERTY, BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED);
+                return WriteConfig(o, prop, value, out summary);
 
             var p = priority == 0 ? 16 : priority;
             if (p is < 1 or > 16)

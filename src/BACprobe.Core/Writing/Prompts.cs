@@ -49,6 +49,8 @@ public static class Prompts
         "Next step: go back and try again, or release it from the controller's own tool.",
         "If you continue, those points stay overridden on the device until someone releases them.");
 
+    public static PromptContent ForPropertyWrite(PropertyWriteRequest r) => new("Change a property", r.Headline, r.Facts, r.Consequence, r.Warning);
+
     public static PromptContent ForAck(Alarms.AlarmAckRequest r) => new("Acknowledge alarm", r.Headline, r.Facts, r.Consequence, r.Warning);
 
     public static PromptContent ForOutOfService(OutOfServiceRequest r) => new(

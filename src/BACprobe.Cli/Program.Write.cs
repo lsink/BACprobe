@@ -14,6 +14,12 @@ internal static partial class Program
     {
         if (!opts.TryGetValue("object", out var spec) || spec is null || !BacnetNames.TryParseObject(spec, out var id))
             throw new ArgumentException("Say which point with --object type:instance, e.g. --object ao:1 (types: ai ao av bi bo bv msi mso msv).");
+        if (!release && opts.TryGetValue("property", out var propText) && propText is not null)
+        {
+            if (!BacnetNames.TryParseProperty(propText, out var prop))
+                throw new ArgumentException($"'{propText}' is not a property name. Use names like high-limit, description or cov-increment.");
+            if (prop != BacnetPropertyIds.PROP_PRESENT_VALUE) return await WritePropertyAsync(opts, id, prop);
+        }
 
         var priority = PriorityChoice.Default.Number;
         if (opts.TryGetValue("priority", out var pText))
@@ -107,6 +113,62 @@ internal static partial class Program
         if (!release)
             Console.WriteLine($"\nThis override is still in place. Release it when you are done:\n" +
                               $"  bacprobe release --device {device.InstanceId} --object {spec} --priority {priority}");
+        Console.WriteLine($"Logged to {WriteLog.DefaultPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Change one configuration property (a limit, the description, the COV increment…): read it to learn its type, confirm in plain
+    /// English, write without a priority, and read it back. Logged like a write; there is nothing to release afterwards.
+    /// </summary>
+    private static async Task<int> WritePropertyAsync(Dictionary<string, string?> opts, BacnetObjectId id, BacnetPropertyIds prop)
+    {
+        if (!opts.TryGetValue("value", out var valueText) || valueText is null)
+            throw new ArgumentException("Say what to set it to with --value, e.g. --value 80 or --value \"Supply air temp\".");
+
+        var (svc, device, error) = await ConnectToDeviceAsync(opts);
+        if (svc is null || device is null) return Fail(error!);
+        using var _ = svc;
+
+        var browser = svc.OpenDevice(device);
+        PropertyRow current;
+        string deviceName, pointName;
+        try
+        {
+            current = await browser.ReadPropertyAsync(id, prop);
+            deviceName = (await browser.ReadPropertyAsync(new BacnetObjectId(BacnetObjectTypes.OBJECT_DEVICE, device.InstanceId),
+                BacnetPropertyIds.PROP_OBJECT_NAME)).Display;
+            pointName = (await browser.ReadPropertyAsync(id, BacnetPropertyIds.PROP_OBJECT_NAME)).Display;
+        }
+        catch (Exception ex)
+        {
+            return Fail(ReadFailure(ex));
+        }
+
+        if (!PropertyEdit.CanEdit(current, out var why)) return Fail($"{current.Name} cannot be changed here. {why}");
+        if (!PropertyEdit.TryParse(current.ValueTag!.Value, valueText, out var value, out var parseError))
+            return Fail($"{parseError} {current.Name} takes {PropertyEdit.KindHint(current.ValueTag.Value)}.");
+
+        var shown = BacnetNames.FormatValues(id.type, prop, [value]);
+        var request = new PropertyWriteRequest(device, deviceName, id, pointName, prop, value, shown, current.Display);
+        Console.WriteLine();
+        PrintExplanation(Prompts.ForPropertyWrite(request));
+        if (!opts.ContainsKey("yes"))
+        {
+            if (Console.IsInputRedirected)
+                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
+            Console.Write("Type y to go ahead, anything else cancels: ");
+            if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Cancelled. Nothing was written.");
+                return 0;
+            }
+        }
+
+        var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
+        var outcome = await writer.WritePropertyAsync(request);
+        if (!outcome.Success) return Fail(outcome.Message);
+        Console.WriteLine($"Done: the {outcome.Message}.");
         Console.WriteLine($"Logged to {WriteLog.DefaultPath}");
         return 0;
     }

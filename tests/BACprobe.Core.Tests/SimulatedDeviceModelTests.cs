@@ -105,8 +105,13 @@ public class SimulatedDeviceModelTests
         var m = Model();
         var e1 = m.Write(Ai1, BacnetPropertyIds.PROP_PRESENT_VALUE, Real(1), 8, out _);
         Assert.Equal(BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED, e1!.Value.Code);
-        var e2 = m.Write(Ao1, BacnetPropertyIds.PROP_OBJECT_NAME, Real(1), 8, out _);
+        // A read-only property is denied; a setting (the name) takes only its own type.
+        var e2 = m.Write(Ao1, BacnetPropertyIds.PROP_OBJECT_TYPE, Real(1), 8, out _);
         Assert.Equal(BacnetErrorCodes.ERROR_CODE_WRITE_ACCESS_DENIED, e2!.Value.Code);
+        var e3 = m.Write(Ao1, BacnetPropertyIds.PROP_OBJECT_NAME, Real(1), 8, out _);
+        Assert.Equal(BacnetErrorCodes.ERROR_CODE_INVALID_DATA_TYPE, e3!.Value.Code);
+        Assert.Null(m.Write(Ao1, BacnetPropertyIds.PROP_DESCRIPTION,
+            new BacnetValue(BacnetApplicationTags.BACNET_APPLICATION_TAG_CHARACTER_STRING, "Damper"), 8, out _));
     }
 
     [Fact]

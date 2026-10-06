@@ -116,7 +116,10 @@ public sealed class ObjectSummary
     public string ValueText => string.IsNullOrEmpty(Units) ? DisplayValue : $"{DisplayValue} {Units}";
 }
 
-public sealed record PropertyRow(uint PropertyId, string Name, string Display, bool IsVendorSpecific, bool IsError);
+/// <param name="ValueTag">The BACnet type of the value the device sent (null for an error, nothing, or a list), so the value can be edited as that type.</param>
+/// <param name="ValueCount">How many values came back: more than one is an array or list.</param>
+public sealed record PropertyRow(uint PropertyId, string Name, string Display, bool IsVendorSpecific, bool IsError,
+    BacnetApplicationTags? ValueTag = null, int ValueCount = 0);
 
 /// <summary>Reads the object list and properties of one device over an existing client.</summary>
 public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
@@ -547,6 +550,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
         if (BacnetNames.IsVendorProperty(propertyId) && values is { Count: > 0 } && !isError)
             display = "raw: " + string.Join(", ", values.Select(v => Convert.ToString(v.Value) ?? ""));
         return new PropertyRow(propertyId, BacnetNames.PropertyName(propertyId), display,
-            BacnetNames.IsVendorProperty(propertyId), isError);
+            BacnetNames.IsVendorProperty(propertyId), isError,
+            !isError && values is { Count: 1 } ? values[0].Tag : null, values?.Count ?? 0);
     }
 }
