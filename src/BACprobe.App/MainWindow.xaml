@@ -2,423 +2,651 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:BACprobe.App"
-        Title="BACprobe" Icon="Assets/app.ico" Height="860" Width="1240" MinHeight="760" MinWidth="1000">
+        Title="{Binding WindowTitle}" Icon="Assets/app.ico" Height="860" Width="1400" MinHeight="600" MinWidth="1000">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    <app:NotConverter x:Key="Not" />
+    <app:CountToVisibilityConverter x:Key="CountToVis" />
+    <app:TextToVisibilityConverter x:Key="TextToVis" />
+
+    <!-- A drop-down panel under a toolbar button: solid background and a thin border, in either theme -->
+    <Style x:Key="FlyoutBorder" TargetType="Border">
+      <Setter Property="Background" Value="{DynamicResource SolidBackgroundFillColorTertiaryBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SurfaceStrokeColorFlyoutBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="14,12" />
+    </Style>
+    <!-- The heading strip at the top of each pane -->
+    <Style x:Key="PaneHeader" TargetType="Border">
+      <Setter Property="Background" Value="{DynamicResource PaneHeaderBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="MinHeight" Value="44" />
+    </Style>
+    <Style x:Key="Pane" TargetType="Border">
+      <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <!-- The colour of the pre-flight and network-check labels: green, orange or red by the worst result -->
+    <Style x:Key="PreflightText" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource OkBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding PreflightState}" Value="{x:Null}"><Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" /></DataTrigger>
+        <DataTrigger Binding="{Binding PreflightState}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource AlarmBrush}" /></DataTrigger>
+        <DataTrigger Binding="{Binding PreflightState}" Value="Fail"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /></DataTrigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="NetworkCheckText" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource OkBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding NetworkCheckState}" Value="Info"><Setter Property="Foreground" Value="{DynamicResource InfoBrush}" /></DataTrigger>
+        <DataTrigger Binding="{Binding NetworkCheckState}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource AlarmBrush}" /></DataTrigger>
+        <DataTrigger Binding="{Binding NetworkCheckState}" Value="Problem"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /></DataTrigger>
+      </Style.Triggers>
+    </Style>
+    <!-- One pre-flight check: icon, name, message, and the likely cause / next step when there is one -->
+    <DataTemplate x:Key="PreflightItem" DataType="{x:Type app:PreflightRow}">
+      <Grid Margin="0,3" MaxWidth="760" HorizontalAlignment="Left">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="22" />
+          <ColumnDefinition Width="140" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+          <TextBlock Text="{Binding Icon}" FontWeight="Bold">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource OkBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource AlarmBrush}" /></DataTrigger>
+                  <DataTrigger Binding="{Binding Severity}" Value="Fail"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /></DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Grid.Column="1" Text="{Binding Check}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,8,0" />
+          <TextBlock Grid.Column="2" Text="{Binding Message}" TextWrapping="Wrap" />
+          <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Help}" Margin="0,2,0,0" Opacity="0.75" TextWrapping="Wrap"
+                     Visibility="{Binding HasHelp, Converter={StaticResource BoolToVis}}" />
+      </Grid>
+    </DataTemplate>
   </Window.Resources>
   <Window.InputBindings>
     <KeyBinding Key="F" Modifiers="Control" Command="{Binding OpenFindCommand}" />
+    <KeyBinding Key="F5" Command="{Binding ScanCommand}" />
   </Window.InputBindings>
   <Window.DataContext>
     <app:MainViewModel />
   </Window.DataContext>
-  <!-- Scrolls instead of clipping when the screen is shorter than the layout needs -->
-  <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-  <!-- MinHeight is the sum of what the page needs: the two header rows, the scan row (which wraps to two lines at this width), the device
-       list and object/properties area (their own minimums are 140 and 350), the Note box, the footer and the write log. Taller windows
-       use the extra room; shorter ones scroll instead of letting the footer draw over the grid. Raise it if a row is added. -->
-  <Border Padding="20" MinHeight="960" Height="{Binding ActualHeight, ElementName=Scroller}">
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="*" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-    </Grid.RowDefinitions>
 
-    <!-- Title and job bar -->
-    <DockPanel Grid.Row="0">
-      <WrapPanel DockPanel.Dock="Right" VerticalAlignment="Center">
-        <TextBlock Text="Job name:" VerticalAlignment="Center" />
-        <TextBox Text="{Binding JobName, UpdateSourceTrigger=PropertyChanged}" Width="150" Margin="6,0,0,0"
-                 AutomationProperties.Name="Job name"
-                 ToolTip="A name for this site visit, e.g. City Hall. Saved in the job file and used as the EDE project name." />
-        <TextBlock Text="Notes:" VerticalAlignment="Center" Margin="12,0,0,0" />
-        <TextBox Text="{Binding JobNotes, UpdateSourceTrigger=PropertyChanged}" Width="200" Margin="6,0,0,0"
-                 AutomationProperties.Name="Job notes"
-                 ToolTip="Notes for yourself, e.g. which panel or floor. Saved in the job file." />
-        <Button Content="Save job..." Padding="12,4" Margin="12,0,0,0" Command="{Binding SaveJobCommand}"
-                ToolTip="Save the devices, points and write history to a .bacprobe file you can reopen later, even with no network." />
-        <Button Content="Open job..." Padding="12,4" Margin="6,0,0,0" Command="{Binding OpenJobCommand}"
-                ToolTip="Open a saved .bacprobe file and browse it offline." />
-      </WrapPanel>
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock Text="1. Choose your network adapter" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-        <CheckBox Content="Read-only" IsChecked="{Binding ReadOnlyMode}" Margin="16,0,0,0" VerticalAlignment="Center"
-                  AutomationProperties.Name="Read-only mode"
-                  ToolTip="Look but do not touch: hides the override controls so nothing can be written. Remembered for next time." />
-        <Border Background="DarkOrange" CornerRadius="3" Padding="8,2" Margin="10,0,0,0" VerticalAlignment="Center"
-                Visibility="{Binding ReadOnlyMode, Converter={StaticResource BoolToVis}}">
-          <TextBlock Text="READ-ONLY: nothing will be written" Foreground="White" FontWeight="SemiBold" />
-        </Border>
-      </StackPanel>
-    </DockPanel>
-    <DockPanel Grid.Row="1" Margin="0,8,0,8">
-      <Button DockPanel.Dock="Right" Content="Re-check" Margin="8,0,0,0" Padding="12,4"
-              Command="{Binding RunPreflightCommand}" />
-      <Button DockPanel.Dock="Right" Content="Refresh list" Margin="8,0,0,0" Padding="12,4"
-              Command="{Binding RefreshAdaptersCommand}" />
-      <ComboBox ItemsSource="{Binding Adapters}" SelectedItem="{Binding SelectedAdapter}" DisplayMemberPath="Display" />
-    </DockPanel>
+  <DockPanel>
+    <!-- Menu: the things a tech needs now and then. Everyday actions are on the toolbar below. -->
+    <Menu DockPanel.Dock="Top" Padding="8,2,0,0">
+      <MenuItem Header="_File">
+        <MenuItem Header="_Open job..." Command="{Binding OpenJobCommand}" />
+        <MenuItem Header="_Save job..." Command="{Binding SaveJobCommand}" />
+        <MenuItem Header="Job name and _notes..." Click="OnJobDetails" />
+        <Separator />
+        <MenuItem Header="_Export this device..." Command="{Binding ExportSelectedCommand}" />
+        <MenuItem Header="Export _all devices..." Command="{Binding ExportAllCommand}" />
+        <Separator />
+        <MenuItem Header="E_xit" Click="OnExit" />
+      </MenuItem>
+      <MenuItem Header="_Tools">
+        <MenuItem Header="_Compare devices..." Command="{Binding OpenCompareCommand}" />
+        <MenuItem Header="Check _BBMD..." Click="OnCheckBbmd" />
+        <MenuItem Header="_MS/TP monitor..." Command="{Binding OpenMstpCommand}" />
+        <Separator />
+        <MenuItem Header="_Network check" Click="OnNetworkCheck" IsEnabled="{Binding HasNetworkCheck}" />
+        <MenuItem Header="_Re-check this adapter" Command="{Binding RunPreflightCommand}" />
+        <MenuItem Header="Re_fresh adapter list" Command="{Binding RefreshAdaptersCommand}" />
+      </MenuItem>
+      <MenuItem Header="_View">
+        <MenuItem Header="_Theme">
+          <MenuItem x:Name="ThemeSystem" Header="Follow _Windows" IsCheckable="True" Click="OnTheme" Tag="System" />
+          <MenuItem x:Name="ThemeLight" Header="_Light" IsCheckable="True" Click="OnTheme" Tag="Light" />
+          <MenuItem x:Name="ThemeDark" Header="_Dark" IsCheckable="True" Click="OnTheme" Tag="Dark" />
+        </MenuItem>
+        <MenuItem Header="_Write log" IsCheckable="True" IsChecked="{Binding IsChecked, ElementName=WriteLogToggle}" />
+      </MenuItem>
+      <MenuItem Header="_Help">
+        <MenuItem Header="_Lessons..." Click="OnOpenLessons" />
+        <MenuItem Header="Open the _write log folder" Click="OnOpenLogFolder" />
+      </MenuItem>
+    </Menu>
 
-    <!-- Pre-flight: one line when all is well, full detail when the tech needs to read something -->
-    <Expander Grid.Row="2" Header="{Binding PreflightSummary}" IsExpanded="{Binding PreflightExpanded, Mode=TwoWay}" Margin="0,0,0,8">
-      <ItemsControl ItemsSource="{Binding Preflight}" Margin="4,6,0,4">
-        <ItemsControl.ItemTemplate>
-          <DataTemplate DataType="{x:Type app:PreflightRow}">
-            <StackPanel Margin="0,2">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding Icon}" Width="22" FontWeight="Bold">
-                  <TextBlock.Style>
-                    <Style TargetType="TextBlock">
-                      <Setter Property="Foreground" Value="SeaGreen" />
-                      <Style.Triggers>
-                        <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
-                        <DataTrigger Binding="{Binding Severity}" Value="Fail"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
-                      </Style.Triggers>
-                    </Style>
-                  </TextBlock.Style>
-                </TextBlock>
-                <TextBlock Text="{Binding Check}" Width="140" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+    <!-- Toolbar: pick the adapter, scan, and the tools used on every visit -->
+    <Border DockPanel.Dock="Top" Padding="12,6" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,0,0,1">
+      <DockPanel LastChildFill="False">
+        <ComboBox DockPanel.Dock="Left" ItemsSource="{Binding Adapters}" SelectedItem="{Binding SelectedAdapter}" DisplayMemberPath="Display"
+                  Width="290" AutomationProperties.Name="Network adapter"
+                  ToolTip="The network adapter plugged into the building network." />
+        <Grid DockPanel.Dock="Left" Margin="6,0,0,0">
+          <Button x:Name="PreflightButton" Click="OnOpenPopup" Tag="PreflightPopup" Padding="10,4" AutomationProperties.Name="Pre-flight checks"
+                        IsHitTestVisible="{Binding IsOpen, ElementName=PreflightPopup, Converter={StaticResource Not}}"
+                        ToolTip="Pre-flight checks for this adapter: click for details.">
+            <TextBlock Text="{Binding PreflightSummary}" Style="{StaticResource PreflightText}" />
+          </Button>
+          <Popup x:Name="PreflightPopup" PlacementTarget="{Binding ElementName=PreflightButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+            <Border Style="{StaticResource FlyoutBorder}" Margin="0,4,0,0">
+              <StackPanel>
+                <TextBlock Text="Pre-flight checks" Style="{DynamicResource BodyStrongTextBlockStyle}" Margin="0,0,0,6" />
+                <ItemsControl ItemsSource="{Binding Preflight}" ItemTemplate="{StaticResource PreflightItem}" />
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                  <Button Content="Re-check" Padding="12,4" Command="{Binding RunPreflightCommand}" />
+                  <Button Content="Refresh adapter list" Padding="12,4" Margin="8,0,0,0" Command="{Binding RefreshAdaptersCommand}" />
+                </StackPanel>
               </StackPanel>
-              <TextBlock Text="{Binding Help}" Margin="162,2,0,0" Opacity="0.75" TextWrapping="Wrap">
-                <TextBlock.Style>
-                  <Style TargetType="TextBlock">
-                    <Setter Property="Visibility" Value="Collapsed" />
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding HasHelp}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </TextBlock.Style>
-              </TextBlock>
-            </StackPanel>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
-    </Expander>
-
-    <DockPanel Grid.Row="3">
-      <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
-        <TextBlock Text="2. Find devices" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0" />
-        <TextBlock Text="Instance range:" VerticalAlignment="Center"
-                   ToolTip="Optional. Leave both boxes empty to find every device, or enter a low and high device instance number." />
-        <!-- Wide enough for a 7-digit instance plus the clear (x) button the Fluent theme adds -->
-        <TextBox Text="{Binding LowText, UpdateSourceTrigger=PropertyChanged}" Width="105" Margin="8,0,4,0"
-                 AutomationProperties.Name="Instance range from" />
-        <TextBlock Text="to" VerticalAlignment="Center" />
-        <TextBox Text="{Binding HighText, UpdateSourceTrigger=PropertyChanged}" Width="105" Margin="4,0,12,0"
-                 AutomationProperties.Name="Instance range to" />
-        <TextBlock Text="BBMD:" VerticalAlignment="Center" Margin="8,0,0,0"
-                   ToolTip="Optional. Only for devices on other subnets. Ask the site contact for the BBMD's IP address." />
-        <TextBox Text="{Binding BbmdText, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="8,0,4,0"
-                 ToolTip="IP address, or IP:port, of the site's BBMD. Leave empty for the local subnet only." />
-        <Button Content="Check BBMD..." Padding="10,4" Margin="0,0,10,0" Command="{Binding CheckBbmdCommand}"
-                AutomationProperties.Name="Check BBMD"
-                ToolTip="Read this BBMD's broadcast and foreign device tables (and every peer's) and flag what looks wrong: one-way peers, missing entries, one-hop masks. Changes nothing." />
-        <TextBlock Text="TTL (s):" VerticalAlignment="Center" />
-        <TextBox Text="{Binding TtlText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="4,0,12,0"
-                 ToolTip="How long the BBMD keeps you registered. BACprobe renews automatically." />
-        <Button Content="Scan" Padding="20,4" Command="{Binding ScanCommand}" />
-        <Button Content="Find point..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenFindCommand}"
-                AutomationProperties.Name="Find point"
-                ToolTip="Search every point on every device by name, description, type or value (Ctrl+F)." />
-        <Button Content="{Binding WatchButtonText}" Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenWatchCommand}"
-                AutomationProperties.Name="Watch list"
-                ToolTip="The points you are keeping an eye on across devices, kept up to date live. Add one with the Watch button next to its properties. Saved with the job." />
-        <Button Content="Alarms..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenAlarmsCommand}"
-                AutomationProperties.Name="Alarms"
-                ToolTip="Every device's active and unacknowledged alarms, worst first, each with a likely cause and next step. Acknowledge one from there (asks first; logged like a write)." />
-        <Button Content="Compare..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenCompareCommand}"
-                AutomationProperties.Name="Compare devices"
-                ToolTip="Line two devices up point by point to find what is set differently: a setpoint someone changed, a point missing on one. Reads only." />
-        <Button Content="MS/TP monitor..." Padding="12,4" Margin="12,0,0,0" Command="{Binding OpenMstpCommand}"
-                AutomationProperties.Name="MS/TP monitor"
-                ToolTip="Listen to an MS/TP trunk through a USB-RS485 adapter and see who is on it, how healthy it is, and the frames going by. Listens only; never transmits." />
-        <Button Content="Lessons..." Padding="12,4" Margin="12,0,0,0" Click="OnOpenLessons"
-                AutomationProperties.Name="Lessons"
-                ToolTip="Short plain-English lessons: BBMDs, the MS/TP token, wiring, priorities. Findings link to the lesson that explains them." />
-        <Button Content="Export device..." Padding="12,4" Margin="12,0,0,0" Command="{Binding ExportSelectedCommand}"
-                ToolTip="Save the selected device point list as Excel, CSV or EDE." />
-        <Button Content="Export all..." Padding="12,4" Margin="8,0,0,0" Command="{Binding ExportAllCommand}"
-                ToolTip="Read every device found and save one combined point list." />
-      </WrapPanel>
-      <TextBlock DockPanel.Dock="Top" Text="{Binding BbmdStatus}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
-      <!-- Network check: conflicts and differences from a saved job. One line unless something needs fixing. -->
-      <Expander DockPanel.Dock="Top" Header="{Binding NetworkCheckSummary}" IsExpanded="{Binding NetworkCheckExpanded, Mode=TwoWay}"
-                Margin="0,0,0,8" Visibility="{Binding HasNetworkCheck, Converter={StaticResource BoolToVis}}">
-        <!-- Capped, with its own scrollbar, so a long list of findings can never push the device list off screen -->
-        <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
-        <StackPanel>
-        <!-- Which devices are on which network -->
-        <TextBlock Text="Network map" FontWeight="SemiBold" Margin="4,6,0,2" />
-        <ItemsControl ItemsSource="{Binding NetworkMapLines}" Margin="4,0,0,4">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <TextBlock Text="{Binding}" Margin="18,1,0,1" TextWrapping="Wrap" />
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-        <ItemsControl ItemsSource="{Binding NetworkFindings}" Margin="4,6,0,4" />
-        </StackPanel>
-        </ScrollViewer>
-      </Expander>
-      <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="8,6" BorderBrush="DarkOrange" BorderThickness="1" CornerRadius="4">
-        <Border.Style>
-          <Style TargetType="Border">
-            <Style.Triggers>
-              <DataTrigger Binding="{Binding OfflineBanner}" Value="">
-                <Setter Property="Visibility" Value="Collapsed" />
-              </DataTrigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
-        <TextBlock Text="{Binding OfflineBanner}" TextWrapping="Wrap" />
-      </Border>
-      <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="1*" MinHeight="140" />
-          <RowDefinition Height="Auto" />
-          <!-- Tall enough for the properties grid plus the override panel; this is what keeps the properties visible -->
-          <RowDefinition Height="3*" MinHeight="350" />
-        </Grid.RowDefinitions>
-        <DataGrid Grid.Row="0" ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
-                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
-                  HeadersVisibility="Column" GridLinesVisibility="Horizontal">
-          <DataGrid.ContextMenu>
-            <ContextMenu>
-              <MenuItem Header="Copy address" Command="{Binding CopyDeviceAddressCommand}" />
-              <MenuItem Header="Copy Wireshark filter" Command="{Binding CopyDeviceFilterCommand}" />
-            </ContextMenu>
-          </DataGrid.ContextMenu>
-          <DataGrid.Columns>
-            <!-- Fixed widths: Auto columns measured themselves before any row existed and clipped their content.
-                 Name takes whatever is left. -->
-            <DataGridTextColumn Header="Instance" Binding="{Binding Instance}" Width="80" />
-            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" MinWidth="140" />
-            <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="200" />
-            <DataGridTextColumn Header="Vendor" Binding="{Binding Vendor}" Width="160" />
-            <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="120" />
-            <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" Width="90" />
-            <DataGridTextColumn Header="Response" Binding="{Binding Response}" Width="90" />
-            <DataGridTextColumn Header="Max APDU" Binding="{Binding MaxApdu}" Width="95" />
-            <DataGridTextColumn Header="Segments" Binding="{Binding Segmentation}" Width="105" />
-            <DataGridTextColumn Header="Clock" Binding="{Binding Clock}" Width="100" />
-          </DataGrid.Columns>
-        </DataGrid>
-        <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" />
-        <Grid Grid.Row="2">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="3*" />
-            <ColumnDefinition Width="6" />
-            <ColumnDefinition Width="2*" MinWidth="360" />
-          </Grid.ColumnDefinitions>
-
-          <!-- Objects. Points with a manual override (priority 8 or higher) show in orange and say which priority holds them;
-               points in fault, in alarm or out of service say so in red in the Status column. -->
-          <DockPanel Grid.Column="0">
-          <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-            <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,8,0" />
-            <ComboBox ItemsSource="{Binding PointFilters}" SelectedItem="{Binding SelectedPointFilter}" DisplayMemberPath="Label"
-                      MinWidth="260" AutomationProperties.Name="Show which points"
-                      ToolTip="Narrow the list to the points that need attention. Live values keep it up to date." />
-            <TextBlock Text="{Binding PointFilterStatus}" VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.75" />
-          </DockPanel>
-          <DataGrid ItemsSource="{Binding Objects}" SelectedItem="{Binding SelectedObject}"
-                    AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
-                    HeadersVisibility="Column" GridLinesVisibility="Horizontal">
-            <DataGrid.ContextMenu>
-              <ContextMenu>
-                <MenuItem Header="Copy object ID" Command="{Binding CopyObjectIdCommand}" />
-                <MenuItem Header="Copy point name" Command="{Binding CopyObjectNameCommand}" />
-                <MenuItem Header="Copy value" Command="{Binding CopyObjectValueCommand}" />
-                <MenuItem Header="Copy Wireshark filter" Command="{Binding CopyObjectFilterCommand}" />
-              </ContextMenu>
-            </DataGrid.ContextMenu>
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="Object" Binding="{Binding Id}" />
-              <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*">
-                <DataGridTextColumn.ElementStyle>
-                  <Style TargetType="TextBlock">
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding IsOverridden}" Value="True">
-                        <Setter Property="Foreground" Value="DarkOrange" />
-                        <Setter Property="FontWeight" Value="SemiBold" />
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </DataGridTextColumn.ElementStyle>
-              </DataGridTextColumn>
-              <DataGridTextColumn Header="Value" Binding="{Binding Value}">
-                <DataGridTextColumn.ElementStyle>
-                  <Style TargetType="TextBlock">
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding RecentlyChanged}" Value="True">
-                        <Setter Property="Foreground" Value="DeepSkyBlue" />
-                        <Setter Property="FontWeight" Value="SemiBold" />
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding IsOverridden}" Value="True">
-                        <Setter Property="Foreground" Value="DarkOrange" />
-                        <Setter Property="FontWeight" Value="SemiBold" />
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </DataGridTextColumn.ElementStyle>
-              </DataGridTextColumn>
-              <DataGridTextColumn Header="Override" Binding="{Binding Override}">
-                <DataGridTextColumn.ElementStyle>
-                  <Style TargetType="TextBlock">
-                    <Setter Property="Foreground" Value="DarkOrange" />
-                    <Setter Property="FontWeight" Value="SemiBold" />
-                    <Setter Property="ToolTip" Value="{Binding OverrideTooltip}" />
-                  </Style>
-                </DataGridTextColumn.ElementStyle>
-              </DataGridTextColumn>
-              <DataGridTextColumn Header="Status" Binding="{Binding Status}">
-                <DataGridTextColumn.ElementStyle>
-                  <Style TargetType="TextBlock">
-                    <Setter Property="Foreground" Value="IndianRed" />
-                    <Setter Property="FontWeight" Value="SemiBold" />
-                    <Setter Property="ToolTip" Value="{Binding StatusTooltip}" />
-                  </Style>
-                </DataGridTextColumn.ElementStyle>
-              </DataGridTextColumn>
-              <DataGridTextColumn Header="Type" Binding="{Binding Type}" />
-              <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" />
-            </DataGrid.Columns>
-          </DataGrid>
-          </DockPanel>
-          <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" />
-
-          <!-- Actions (trend / override) on top so they are never cut off on a short screen; the properties list takes
-               whatever space is left and scrolls by itself. -->
-          <Grid Grid.Column="2">
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="*" MinHeight="80" />
-              <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <DockPanel Grid.Row="0" Margin="0,0,0,6">
-              <Button DockPanel.Dock="Right" Content="Watch" Padding="12,3" Margin="0,0,6,0" Command="{Binding WatchSelectedCommand}"
-                      AutomationProperties.Name="Watch this point"
-                      ToolTip="Add this point to the watch list (or take it off if it is already there). The list follows points across devices and is saved with the job." />
-              <Button DockPanel.Dock="Right" Content="Trend live..." Padding="12,3" Command="{Binding TrendLiveCommand}"
-                      AutomationProperties.Name="Trend live"
-                      ToolTip="Open a temporary trend of this point: BACprobe reads it every few seconds and charts it while the window is open. Nothing is saved on the controller." />
-              <TextBlock Text="{Binding PropertiesHeader}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-            </DockPanel>
-            <DataGrid Grid.Row="3" ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True"
-                      HeadersVisibility="Column" GridLinesVisibility="Horizontal">
-              <DataGrid.Columns>
-                <DataGridTextColumn Header="Property" Binding="{Binding Name}" Width="150" />
-                <DataGridTextColumn Header="Value" Binding="{Binding Display}" Width="*" />
-              </DataGrid.Columns>
-            </DataGrid>
-            <StackPanel Grid.Row="1" Margin="0,0,0,10"
-                        Visibility="{Binding IsTrendSelected, Converter={StaticResource BoolToVis}}">
-              <TextBlock Text="Trend log" FontWeight="SemiBold" />
-              <TextBlock Text="The controller records this point's history on its own. Open it to see a chart, the recorded values, and to save them to Excel."
-                         TextWrapping="Wrap" Opacity="0.8" Margin="0,4,0,0" />
-              <Button Content="View trend..." Padding="16,4" Margin="0,8,0,0" HorizontalAlignment="Left"
-                      Command="{Binding ViewTrendCommand}" AutomationProperties.Name="View trend" />
-            </StackPanel>
-            <StackPanel Grid.Row="1" Margin="0,0,0,10"
-                        Visibility="{Binding ShowOverridePanel, Converter={StaticResource BoolToVis}}">
-              <TextBlock Text="Override this point" FontWeight="SemiBold" />
-              <DockPanel Margin="0,6,0,0">
-                <TextBlock Text="Value" Width="60" VerticalAlignment="Center" />
-                <Grid>
-                  <!-- On/off points and named multi-state points: a dropdown. Everything else: type a number. -->
-                  <ComboBox ItemsSource="{Binding StateChoices}" SelectedItem="{Binding SelectedStateChoice}"
-                            DisplayMemberPath="Label" AutomationProperties.Name="State to write"
-                            Visibility="{Binding IsStateSelected, Converter={StaticResource BoolToVis}}" />
-                  <TextBox Text="{Binding WriteValueText, UpdateSourceTrigger=PropertyChanged}"
-                           AutomationProperties.Name="Value to write"
-                           Visibility="{Binding IsNotStateSelected, Converter={StaticResource BoolToVis}}"
-                           ToolTip="A number for analog points; 1, 2, 3... for multi-state points whose states have no names." />
-                </Grid>
-              </DockPanel>
-              <DockPanel Margin="0,6,0,0">
-                <TextBlock Text="Priority" Width="60" VerticalAlignment="Center" />
-                <ComboBox ItemsSource="{Binding PriorityChoices}" SelectedItem="{Binding SelectedPriority}"
-                          DisplayMemberPath="Label" AutomationProperties.Name="Write priority" />
-              </DockPanel>
-              <TextBlock Text="{Binding SelectedPriority.Hint}" TextWrapping="Wrap" Opacity="0.75" Margin="60,4,0,0" />
-              <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                <Button Content="Write..." Padding="16,4" Command="{Binding WriteSelectedCommand}" />
-                <Button Content="Release my override" Padding="16,4" Margin="8,0,0,0"
-                        Command="{Binding ReleaseSelectedCommand}" />
-              </StackPanel>
-            </StackPanel>
-            <!-- A note for the selected point (the device when no point is selected). Saved with the job; never written to a device. -->
-            <StackPanel Grid.Row="4" Margin="0,8,0,0"
-                        Visibility="{Binding CanNote, Converter={StaticResource BoolToVis}}">
-              <TextBlock Text="{Binding NoteTitle}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-              <TextBox Text="{Binding NoteText, UpdateSourceTrigger=PropertyChanged}" Height="58" Margin="0,4,0,0"
-                       AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                       AutomationProperties.Name="Note"
-                       ToolTip="Your own note, e.g. what you found or why you left something overridden. Saved in the job file (Save job...); never sent to the device." />
-            </StackPanel>
-            <!-- Out of service freezes a point (any point that has the property, inputs included): held to the same confirmation and log as a write -->
-            <StackPanel Grid.Row="2" Margin="0,0,0,10" Orientation="Horizontal"
-                        Visibility="{Binding ShowOutOfServicePanel, Converter={StaticResource BoolToVis}}">
-              <Button Content="{Binding OutOfServiceButtonText}" Padding="16,4" Command="{Binding ToggleOutOfServiceCommand}"
-                      AutomationProperties.Name="Out of service"
-                      ToolTip="Out of service tells the controller to stop updating this point from its input or program. Useful for testing; put it back before you leave." />
-            </StackPanel>
-          </Grid>
+            </Border>
+          </Popup>
         </Grid>
-      </Grid>
-    </DockPanel>
 
-    <!-- Confirmation after an export or job save, with quick access to the file -->
-    <StackPanel Grid.Row="4" Margin="0,12,0,0">
-      <Border Margin="0,0,0,8" Padding="10,8" BorderBrush="SeaGreen" BorderThickness="1" CornerRadius="4" Background="#2230A050">
-        <Border.Style>
-          <Style TargetType="Border">
-            <Style.Triggers>
-              <DataTrigger Binding="{Binding ResultMessage}" Value="">
-                <Setter Property="Visibility" Value="Collapsed" />
-              </DataTrigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+        <Button DockPanel.Dock="Left" Content="Scan" Padding="22,5" Margin="14,0,0,0" Command="{Binding ScanCommand}"
+                Style="{DynamicResource AccentButtonStyle}" AutomationProperties.Name="Scan"
+                ToolTip="Find the BACnet devices on this network (F5)." />
+        <Grid DockPanel.Dock="Left" Margin="6,0,0,0">
+          <Button x:Name="ScanOptionsButton" Click="OnOpenPopup" Tag="ScanOptionsPopup" Content="Scan options ▾" Padding="10,5" AutomationProperties.Name="Scan options"
+                        IsHitTestVisible="{Binding IsOpen, ElementName=ScanOptionsPopup, Converter={StaticResource Not}}"
+                        ToolTip="Limit the scan to a range of device numbers, or reach other subnets through the site's BBMD." />
+          <Popup x:Name="ScanOptionsPopup" PlacementTarget="{Binding ElementName=ScanOptionsButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+            <Border Style="{StaticResource FlyoutBorder}" Margin="0,4,0,0" Width="430">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.ColumnSpan="2" Text="Leave everything empty to find every device on this subnet." Opacity="0.8"
+                           TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBlock Grid.Row="1" Text="Device numbers" VerticalAlignment="Center" Margin="0,0,12,0" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                  <TextBox Text="{Binding LowText, UpdateSourceTrigger=PropertyChanged}" Width="120" AutomationProperties.Name="Instance range from" />
+                  <TextBlock Text="to" VerticalAlignment="Center" Margin="8,0" />
+                  <TextBox Text="{Binding HighText, UpdateSourceTrigger=PropertyChanged}" Width="120" AutomationProperties.Name="Instance range to" />
+                </StackPanel>
+                <TextBlock Grid.Row="2" Text="BBMD" VerticalAlignment="Center" Margin="0,8,12,0"
+                           ToolTip="Only for devices on other subnets. Ask the site contact for the BBMD's IP address." />
+                <TextBox x:Name="BbmdBox" Grid.Row="2" Grid.Column="1" Margin="0,8,0,0" Text="{Binding BbmdText, UpdateSourceTrigger=PropertyChanged}"
+                         AutomationProperties.Name="BBMD address" ToolTip="IP address, or IP:port, of the site's BBMD. Leave empty for the local subnet only." />
+                <TextBlock Grid.Row="3" Text="Stay registered (s)" VerticalAlignment="Center" Margin="0,8,12,0"
+                           ToolTip="How long the BBMD keeps you registered. BACprobe renews automatically." />
+                <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,8,0,0">
+                  <TextBox Text="{Binding TtlText, UpdateSourceTrigger=PropertyChanged}" Width="90" AutomationProperties.Name="BBMD time to live" />
+                  <Button Content="Check BBMD..." Padding="10,4" Margin="10,0,0,0" Command="{Binding CheckBbmdCommand}" AutomationProperties.Name="Check BBMD"
+                          ToolTip="Read this BBMD's broadcast and foreign device tables (and every peer's) and flag what looks wrong. Changes nothing." />
+                </StackPanel>
+                <TextBlock Grid.Row="4" Grid.ColumnSpan="2" Text="{Binding BbmdStatus}" TextWrapping="Wrap" Margin="0,10,0,0" Opacity="0.85"
+                           Visibility="{Binding BbmdStatus, Converter={StaticResource TextToVis}}" />
+                <TextBlock Grid.Row="5" Grid.ColumnSpan="2" Text="Press Scan to use these settings." Opacity="0.7" Margin="0,10,0,0" />
+              </Grid>
+            </Border>
+          </Popup>
+        </Grid>
+
+        <Border DockPanel.Dock="Left" Width="1" Margin="14,4" Background="{DynamicResource PanelBorderBrush}" />
+        <Button DockPanel.Dock="Left" Content="Find..." Padding="12,5" Command="{Binding OpenFindCommand}" AutomationProperties.Name="Find point"
+                ToolTip="Search every point on every device by name, description, type or value (Ctrl+F)." />
+        <Button DockPanel.Dock="Left" Content="Alarms..." Padding="12,5" Margin="6,0,0,0" Command="{Binding OpenAlarmsCommand}" AutomationProperties.Name="Alarms"
+                ToolTip="Every device's active and unacknowledged alarms, worst first, each with a likely cause and next step." />
+        <Button DockPanel.Dock="Left" Content="{Binding WatchButtonText}" Padding="12,5" Margin="6,0,0,0" Command="{Binding OpenWatchCommand}"
+                AutomationProperties.Name="Watch list"
+                ToolTip="The points you are keeping an eye on across devices, kept up to date live. Saved with the job." />
+
+        <!-- Right side: the job, and the read-only switch (it stays visible, and the title bar says READ-ONLY too) -->
+        <Grid DockPanel.Dock="Right" Margin="6,0,0,0">
+          <Button x:Name="JobButton" Click="OnOpenPopup" Tag="JobPopup" Padding="12,5" AutomationProperties.Name="Job"
+                        IsHitTestVisible="{Binding IsOpen, ElementName=JobPopup, Converter={StaticResource Not}}"
+                        ToolTip="This site visit: its name and notes, and saving or opening a job file.">
+            <TextBlock Text="{Binding JobButtonText}" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+          </Button>
+          <Popup x:Name="JobPopup" PlacementTarget="{Binding ElementName=JobButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" HorizontalOffset="-260">
+            <Border Style="{StaticResource FlyoutBorder}" Margin="0,4,0,0" Width="380">
+              <StackPanel>
+                <TextBlock Text="Job name" />
+                <TextBox x:Name="JobNameBox" Text="{Binding JobName, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,0"
+                         AutomationProperties.Name="Job name" ToolTip="A name for this site visit, e.g. City Hall. Saved in the job file and used as the EDE project name." />
+                <TextBlock Text="Notes" Margin="0,10,0,0" />
+                <TextBox Text="{Binding JobNotes, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,0" Height="70" AcceptsReturn="True"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Job notes"
+                         ToolTip="Notes for yourself, e.g. which panel or floor. Saved in the job file." />
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                  <Button Content="Save job..." Padding="12,4" Command="{Binding SaveJobCommand}"
+                          ToolTip="Save the devices, points, notes, watch list and write history to a .bacprobe file you can reopen later, even with no network." />
+                  <Button Content="Open job..." Padding="12,4" Margin="8,0,0,0" Command="{Binding OpenJobCommand}"
+                          ToolTip="Open a saved .bacprobe file and browse it offline." />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </Popup>
+        </Grid>
+        <ToggleButton DockPanel.Dock="Right" IsChecked="{Binding ReadOnlyMode}" Padding="12,5" AutomationProperties.Name="Read-only mode"
+                      ToolTip="Read-only: look but do not touch. Nothing can be written or acknowledged while it is on. Remembered for next time.">
+          <!-- Not a ToggleButton style: one BasedOn the type falls back to the classic theme here -->
+          <TextBlock>
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Text" Value="Read-only: off" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding ReadOnlyMode}" Value="True">
+                    <Setter Property="Text" Value="🔒 Read-only" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+        </ToggleButton>
+      </DockPanel>
+    </Border>
+
+    <!-- Status bar: what just happened, overrides left in place, and the write log -->
+    <Border DockPanel.Dock="Bottom" Padding="12,4" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,1,0,0">
+      <DockPanel>
+        <ToggleButton x:Name="WriteLogToggle" DockPanel.Dock="Right" Content="Write log" Padding="10,3" Margin="12,0,0,0"
+                      ToolTip="Every write, release and acknowledgement this session (also saved to %LOCALAPPDATA%\BACprobe\write-log.txt)." />
+        <TextBlock DockPanel.Dock="Right" Text="{Binding OverrideSummary}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="16,0,0,0" />
+        <TextBlock Text="{Binding Status}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" />
+      </DockPanel>
+    </Border>
+    <!-- Write log drawer, closed unless asked for -->
+    <Border DockPanel.Dock="Bottom" Padding="12,6" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="0,1,0,0"
+            Visibility="{Binding IsChecked, ElementName=WriteLogToggle, Converter={StaticResource BoolToVis}}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Write log (also saved to %LOCALAPPDATA%\BACprobe\write-log.txt)" Opacity="0.8" Margin="0,0,0,4" />
+        <ListBox ItemsSource="{Binding WriteLogLines}" Height="110" FontFamily="Consolas" AutomationProperties.Name="Write log" />
+      </DockPanel>
+    </Border>
+
+    <!-- Messages that come and go: network check after a scan, a finished export or job save, viewing a saved job -->
+    <StackPanel DockPanel.Dock="Top" Margin="12,8,12,0">
+      <Grid Visibility="{Binding HasNetworkCheck, Converter={StaticResource BoolToVis}}" HorizontalAlignment="Left" Margin="0,0,0,6">
+        <Button x:Name="NetworkCheckButton" Click="OnOpenPopup" Tag="NetworkCheckPopup" Padding="10,3" AutomationProperties.Name="Network check"
+                      IsHitTestVisible="{Binding IsOpen, ElementName=NetworkCheckPopup, Converter={StaticResource Not}}"
+                      ToolTip="Duplicate device numbers or addresses, routed networks, slow devices, clocks: click for the details.">
+          <TextBlock Text="{Binding NetworkCheckSummary}" Style="{StaticResource NetworkCheckText}" />
+        </Button>
+        <Popup x:Name="NetworkCheckPopup" PlacementTarget="{Binding ElementName=NetworkCheckButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+          <Border Style="{StaticResource FlyoutBorder}" Margin="0,4,0,0" Width="760">
+            <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto">
+              <StackPanel>
+                <TextBlock Text="Network map" Style="{DynamicResource BodyStrongTextBlockStyle}" />
+                <ItemsControl ItemsSource="{Binding NetworkMapLines}" Margin="0,2,0,8">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding}" Margin="18,1,0,1" TextWrapping="Wrap" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <ItemsControl ItemsSource="{Binding NetworkFindings}" />
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+        </Popup>
+      </Grid>
+      <Border Padding="10,6" BorderBrush="{DynamicResource OkBrush}" BorderThickness="1" CornerRadius="4" Margin="0,0,0,6"
+              Background="{DynamicResource SuccessBackgroundBrush}" Visibility="{Binding ResultMessage, Converter={StaticResource TextToVis}}">
         <DockPanel>
-          <Button DockPanel.Dock="Right" Content="✕" Padding="8,2" Margin="8,0,0,0" ToolTip="Dismiss"
-                  Command="{Binding DismissResultCommand}" />
-          <Button DockPanel.Dock="Right" Content="Show in folder" Padding="12,3" Margin="8,0,0,0"
-                  Command="{Binding ShowResultInFolderCommand}" />
-          <Button DockPanel.Dock="Right" Content="Open file" Padding="12,3" Margin="8,0,0,0"
-                  Command="{Binding OpenResultFileCommand}" />
+          <Button DockPanel.Dock="Right" Content="✕" Padding="8,2" Margin="8,0,0,0" ToolTip="Dismiss" Command="{Binding DismissResultCommand}" />
+          <Button DockPanel.Dock="Right" Content="Show in folder" Padding="12,3" Margin="8,0,0,0" Command="{Binding ShowResultInFolderCommand}" />
+          <Button DockPanel.Dock="Right" Content="Open file" Padding="12,3" Margin="8,0,0,0" Command="{Binding OpenResultFileCommand}" />
           <TextBlock Text="{Binding ResultMessage}" TextWrapping="Wrap" VerticalAlignment="Center" />
         </DockPanel>
       </Border>
-      <DockPanel>
-        <TextBlock DockPanel.Dock="Right" Text="{Binding OverrideSummary}" Margin="16,0,0,0" FontWeight="SemiBold" VerticalAlignment="Center" />
-        <!-- Live values: refresh the point list by itself -->
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
-          <TextBlock Text="{Binding LiveStatus}" Opacity="0.75" VerticalAlignment="Center" Margin="0,0,10,0" />
-          <CheckBox Content="COV" IsChecked="{Binding UseCov}" Margin="0,0,10,0" VerticalAlignment="Center"
-                    AutomationProperties.Name="Use COV"
-                    ToolTip="Ask the device to push changes to us (change-of-value). Points or devices that refuse are polled instead. Untick to poll everything." />
-          <ComboBox ItemsSource="{Binding LiveIntervals}" SelectedItem="{Binding LiveIntervalSeconds}" ItemStringFormat="{}{0} s"
-                    Width="70" Margin="0,0,6,0" AutomationProperties.Name="Live refresh interval"
-                    ToolTip="How often to re-read points that are polled (all of them if COV is off)." />
-          <ToggleButton Content="Live values" IsChecked="{Binding IsLive}" IsEnabled="{Binding CanUseLive}" Padding="12,4"
-                        AutomationProperties.Name="Live values"
-                        ToolTip="Keep the point list up to date, so you can watch values change and see overrides appear. Needs a live connection." />
-        </StackPanel>
-        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
-      </DockPanel>
+      <Border Padding="10,6" BorderBrush="{DynamicResource AlarmBrush}" BorderThickness="1" CornerRadius="4" Margin="0,0,0,6"
+              Background="{DynamicResource WarningBackgroundBrush}" Visibility="{Binding OfflineBanner, Converter={StaticResource TextToVis}}">
+        <TextBlock Text="{Binding OfflineBanner}" TextWrapping="Wrap" />
+      </Border>
     </StackPanel>
-    <Expander Grid.Row="5" Header="Write log (also saved to %LOCALAPPDATA%\BACprobe\write-log.txt)" Margin="0,8,0,0">
-      <ListBox ItemsSource="{Binding WriteLogLines}" Height="90" FontFamily="Consolas" />
-    </Expander>
-  </Grid>
-  </Border>
-  </ScrollViewer>
+
+    <!-- The three panes: devices | points | the selected point (or device) -->
+    <Grid Margin="12,0,12,10">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="250" MinWidth="170" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="*" MinWidth="380" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="430" MinWidth="340" />
+      </Grid.ColumnDefinitions>
+
+      <!-- Devices -->
+      <Border Grid.Column="0" Style="{StaticResource Pane}">
+        <DockPanel>
+          <Border DockPanel.Dock="Top" Style="{StaticResource PaneHeader}">
+            <TextBlock VerticalAlignment="Center" Style="{DynamicResource BodyStrongTextBlockStyle}"
+                       Text="{Binding Devices.Count, StringFormat=Devices ({0})}" />
+          </Border>
+          <Grid>
+            <!-- A list, not a grid: a grouped DataGrid ignores its column widths. Grouped by network (set up in MainWindow.xaml.cs). -->
+            <ListBox x:Name="DeviceList" ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" BorderThickness="0"
+                     VirtualizingPanel.IsVirtualizingWhenGrouping="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     AutomationProperties.Name="Devices">
+              <ListBox.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Copy address" Command="{Binding CopyDeviceAddressCommand}" />
+                  <MenuItem Header="Copy Wireshark filter" Command="{Binding CopyDeviceFilterCommand}" />
+                </ContextMenu>
+              </ListBox.ContextMenu>
+              <ListBox.GroupStyle>
+                <GroupStyle>
+                  <GroupStyle.HeaderTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Name}" Margin="10,8,0,2" Style="{DynamicResource CaptionTextBlockStyle}" Opacity="0.75" />
+                    </DataTemplate>
+                  </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+              </ListBox.GroupStyle>
+              <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type app:DeviceRow}">
+                  <DockPanel ToolTip="{Binding Tooltip}" AutomationProperties.Name="{Binding Label}">
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding Instance}" Width="64" Opacity="0.75" />
+                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                  </DockPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Text="No devices yet." Margin="12" Opacity="0.7"
+                       Visibility="{Binding Devices.Count, Converter={StaticResource CountToVis}, ConverterParameter=Zero}" />
+          </Grid>
+        </DockPanel>
+      </Border>
+      <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="Transparent" />
+
+      <!-- Points of the selected device -->
+      <Border Grid.Column="2" Style="{StaticResource Pane}">
+        <DockPanel>
+          <Border DockPanel.Dock="Top" Style="{StaticResource PaneHeader}">
+            <DockPanel>
+              <!-- Live values: keep this list up to date by itself -->
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{Binding LiveStatus}" Opacity="0.75" VerticalAlignment="Center" Margin="0,0,10,0" MaxWidth="220"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding LiveStatus}" />
+                <CheckBox Content="COV" IsChecked="{Binding UseCov}" Margin="0,0,6,0" VerticalAlignment="Center" MinWidth="0"
+                          AutomationProperties.Name="Use COV"
+                          ToolTip="Ask the device to push changes to us (change-of-value). Points or devices that refuse are polled instead. Untick to poll everything." />
+                <ComboBox ItemsSource="{Binding LiveIntervals}" SelectedItem="{Binding LiveIntervalSeconds}" ItemStringFormat="{}{0} s"
+                          Width="76" Margin="0,0,6,0" AutomationProperties.Name="Live refresh interval"
+                          ToolTip="How often to re-read points that are polled (all of them if COV is off)." />
+                <ToggleButton Content="Live values" IsChecked="{Binding IsLive}" IsEnabled="{Binding CanUseLive}" Padding="10,4"
+                              AutomationProperties.Name="Live values"
+                              ToolTip="Keep this list up to date, so you can watch values change and see overrides appear. Needs a live connection." />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <ComboBox ItemsSource="{Binding PointFilters}" SelectedItem="{Binding SelectedPointFilter}" DisplayMemberPath="Label"
+                          MinWidth="190" AutomationProperties.Name="Show which points"
+                          ToolTip="Narrow the list to the points that need attention. Live values keep it up to date." />
+                <TextBlock Text="{Binding PointFilterStatus}" VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.75" />
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Grid>
+            <DataGrid ItemsSource="{Binding Objects}" SelectedItem="{Binding SelectedObject}"
+                      Visibility="{Binding Devices.Count, Converter={StaticResource CountToVis}}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" BorderThickness="0"
+                      HeadersVisibility="Column" GridLinesVisibility="Horizontal" RowHeight="30" ColumnHeaderHeight="34"
+                      AutomationProperties.Name="Points">
+              <DataGrid.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Copy object ID" Command="{Binding CopyObjectIdCommand}" />
+                  <MenuItem Header="Copy point name" Command="{Binding CopyObjectNameCommand}" />
+                  <MenuItem Header="Copy value" Command="{Binding CopyObjectValueCommand}" />
+                  <MenuItem Header="Copy Wireshark filter" Command="{Binding CopyObjectFilterCommand}" />
+                </ContextMenu>
+              </DataGrid.ContextMenu>
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Object" Binding="{Binding Id}" Width="72">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding Type}" /></Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" MinWidth="140">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsOverridden}" Value="True">
+                          <Setter Property="Foreground" Value="{DynamicResource OverrideBrush}" />
+                          <Setter Property="FontWeight" Value="SemiBold" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="110">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding RecentlyChanged}" Value="True">
+                          <Setter Property="Foreground" Value="{DynamicResource ChangedBrush}" />
+                          <Setter Property="FontWeight" Value="SemiBold" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsOverridden}" Value="True">
+                          <Setter Property="Foreground" Value="{DynamicResource OverrideBrush}" />
+                          <Setter Property="FontWeight" Value="SemiBold" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Override" Binding="{Binding Override}" Width="95">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Foreground" Value="{DynamicResource OverrideBrush}" />
+                      <Setter Property="FontWeight" Value="SemiBold" />
+                      <Setter Property="ToolTip" Value="{Binding OverrideTooltip}" />
+                    </Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="150">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Foreground" Value="{DynamicResource FaultBrush}" />
+                      <Setter Property="FontWeight" Value="SemiBold" />
+                      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                      <Setter Property="ToolTip" Value="{Binding StatusTooltip}" />
+                    </Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                      <Setter Property="ToolTip" Value="{Binding Description}" />
+                      <Setter Property="Opacity" Value="0.85" />
+                    </Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+
+            <!-- Before the first scan: what to do, and the pre-flight results in full -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          Visibility="{Binding Devices.Count, Converter={StaticResource CountToVis}, ConverterParameter=Zero}">
+              <StackPanel Margin="24,20">
+                <TextBlock Text="Find the devices" Style="{DynamicResource SubtitleTextBlockStyle}" />
+                <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Text="1.  Pick the network adapter that is plugged into the building network (top left)." />
+                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="2.  Check the pre-flight results below: red means fix it first, orange is worth a read." />
+                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="3.  Press Scan. Devices appear on the left; pick one to see its points." />
+                <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Opacity="0.75"
+                           Text="Devices on another subnet? Add the site's BBMD under Scan options. Nothing is written to any device while Read-only is on." />
+                <TextBlock Text="Pre-flight checks" Style="{DynamicResource BodyStrongTextBlockStyle}" Margin="0,18,0,4" />
+                <ItemsControl ItemsSource="{Binding Preflight}" ItemTemplate="{StaticResource PreflightItem}" />
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+        </DockPanel>
+      </Border>
+      <GridSplitter Grid.Column="3" Width="8" HorizontalAlignment="Stretch" Background="Transparent" />
+
+      <!-- The selected point (or, with no point selected, the device) -->
+      <Border Grid.Column="4" Style="{StaticResource Pane}">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <!-- Nothing selected -->
+          <TextBlock Grid.RowSpan="3" Margin="16" Opacity="0.7" TextWrapping="Wrap"
+                     Text="Pick a device on the left, then a point, to see its value and properties here.">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding SelectedDevice}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+
+          <!-- A device, no point -->
+          <ScrollViewer Grid.Row="0" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto"
+                        Visibility="{Binding ShowDeviceCard, Converter={StaticResource BoolToVis}}">
+            <StackPanel Margin="14,12">
+              <TextBlock Text="{Binding SelectedDevice.Name}" Style="{DynamicResource SubtitleTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding SelectedDevice.Instance, StringFormat=Device {0}}" Opacity="0.75" Margin="0,2,0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="120" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.Resources>
+                  <Style TargetType="TextBlock"><Setter Property="Margin" Value="0,3" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
+                </Grid.Resources>
+                <TextBlock Grid.Row="0" Text="Address" Opacity="0.75" /><TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SelectedDevice.Address}" />
+                <TextBlock Grid.Row="1" Text="Vendor" Opacity="0.75" /><TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedDevice.Vendor}" />
+                <TextBlock Grid.Row="2" Text="Model" Opacity="0.75" /><TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SelectedDevice.Model}" />
+                <TextBlock Grid.Row="3" Text="Firmware" Opacity="0.75" /><TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SelectedDevice.Firmware}" />
+                <TextBlock Grid.Row="4" Text="Response" Opacity="0.75" /><TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SelectedDevice.Response}" />
+                <TextBlock Grid.Row="5" Text="Max APDU" Opacity="0.75" /><TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SelectedDevice.MaxApdu}" />
+                <TextBlock Grid.Row="6" Text="Segmentation" Opacity="0.75" /><TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding SelectedDevice.Segmentation}" />
+                <TextBlock Grid.Row="7" Text="Clock" Opacity="0.75" /><TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding SelectedDevice.Clock}" />
+              </Grid>
+              <TextBlock Margin="0,14,0,0" Opacity="0.7" TextWrapping="Wrap" Text="Pick a point in the middle to see its value, override it, or trend it." />
+            </StackPanel>
+          </ScrollViewer>
+
+          <!-- A point: name, value, problems, actions -->
+          <StackPanel Grid.Row="0" Margin="14,12,14,6" Visibility="{Binding ShowPointDetail, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding SelectedObject.Name}" Style="{DynamicResource SubtitleTextBlockStyle}" TextTrimming="CharacterEllipsis"
+                       ToolTip="{Binding SelectedObject.Name}" />
+            <TextBlock Opacity="0.75" Margin="0,2,0,0">
+              <Run Text="{Binding SelectedObject.Id, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding SelectedObject.Type, Mode=OneWay}" />
+            </TextBlock>
+            <TextBlock Text="{Binding SelectedObject.Value}" FontSize="26" FontWeight="SemiBold" Margin="0,6,0,0" TextTrimming="CharacterEllipsis">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding SelectedObject.IsOverridden}" Value="True"><Setter Property="Foreground" Value="{DynamicResource OverrideBrush}" /></DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
+            <TextBlock Text="{Binding SelectedObject.Override, StringFormat='Overridden: {0}'}" Foreground="{DynamicResource OverrideBrush}" FontWeight="SemiBold"
+                       TextWrapping="Wrap" ToolTip="{Binding SelectedObject.OverrideTooltip}"
+                       Visibility="{Binding SelectedObject.Override, Converter={StaticResource TextToVis}}" />
+            <TextBlock Text="{Binding SelectedObject.Status}" Foreground="{DynamicResource FaultBrush}" FontWeight="SemiBold" TextWrapping="Wrap"
+                       ToolTip="{Binding SelectedObject.StatusTooltip}" Visibility="{Binding SelectedObject.Status, Converter={StaticResource TextToVis}}" />
+
+            <WrapPanel Margin="0,10,0,0">
+              <Button Content="Trend live..." Padding="12,4" Margin="0,0,6,6" Command="{Binding TrendLiveCommand}" AutomationProperties.Name="Trend live"
+                      ToolTip="Open a temporary trend of this point: BACprobe reads it every few seconds and charts it while the window is open. Nothing is saved on the controller." />
+              <Button Content="View trend..." Padding="12,4" Margin="0,0,6,6" Command="{Binding ViewTrendCommand}" AutomationProperties.Name="View trend"
+                      Visibility="{Binding IsTrendSelected, Converter={StaticResource BoolToVis}}"
+                      ToolTip="The controller records this point's history on its own: see a chart, the recorded values, and save them to Excel." />
+              <Button Content="Watch" Padding="12,4" Margin="0,0,6,6" Command="{Binding WatchSelectedCommand}" AutomationProperties.Name="Watch this point"
+                      ToolTip="Add this point to the watch list (or take it off if it is already there). Saved with the job." />
+              <Button Content="{Binding OutOfServiceButtonText}" Padding="12,4" Margin="0,0,6,6" Command="{Binding ToggleOutOfServiceCommand}"
+                      AutomationProperties.Name="Out of service" Visibility="{Binding ShowOutOfServicePanel, Converter={StaticResource BoolToVis}}"
+                      ToolTip="Out of service tells the controller to stop updating this point from its input or program. Useful for testing; put it back before you leave." />
+            </WrapPanel>
+
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.8" Visibility="{Binding ShowReadOnlyHint, Converter={StaticResource BoolToVis}}"
+                       Text="Read-only is on, so this point cannot be overridden. Switch Read-only off in the toolbar to override it." />
+
+            <!-- Override: hidden in read-only mode -->
+            <Border Margin="0,6,0,0" Padding="10,8" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" CornerRadius="6"
+                    Visibility="{Binding ShowOverridePanel, Converter={StaticResource BoolToVis}}">
+              <StackPanel>
+                <TextBlock Text="Override this point" Style="{DynamicResource BodyStrongTextBlockStyle}" />
+                <DockPanel Margin="0,6,0,0">
+                  <TextBlock Text="Value" Width="64" VerticalAlignment="Center" />
+                  <Grid>
+                    <!-- On/off points and named multi-state points: a dropdown. Everything else: type a number. -->
+                    <ComboBox ItemsSource="{Binding StateChoices}" SelectedItem="{Binding SelectedStateChoice}"
+                              DisplayMemberPath="Label" AutomationProperties.Name="State to write"
+                              Visibility="{Binding IsStateSelected, Converter={StaticResource BoolToVis}}" />
+                    <TextBox Text="{Binding WriteValueText, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Value to write"
+                             Visibility="{Binding IsNotStateSelected, Converter={StaticResource BoolToVis}}"
+                             ToolTip="A number for analog points; 1, 2, 3... for multi-state points whose states have no names." />
+                  </Grid>
+                </DockPanel>
+                <DockPanel Margin="0,6,0,0">
+                  <TextBlock Text="Priority" Width="64" VerticalAlignment="Center" />
+                  <ComboBox ItemsSource="{Binding PriorityChoices}" SelectedItem="{Binding SelectedPriority}"
+                            DisplayMemberPath="Label" AutomationProperties.Name="Write priority" />
+                </DockPanel>
+                <TextBlock Text="{Binding SelectedPriority.Hint}" TextWrapping="Wrap" Opacity="0.75" Margin="64,4,0,0" />
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                  <Button Content="Write..." Padding="16,4" Command="{Binding WriteSelectedCommand}" Style="{DynamicResource AccentButtonStyle}" />
+                  <Button Content="Release my override" Padding="16,4" Margin="8,0,0,0" Command="{Binding ReleaseSelectedCommand}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <!-- Properties of the point: takes whatever room is left, and scrolls itself -->
+          <DockPanel Grid.Row="1" Margin="14,4,14,0" Visibility="{Binding ShowPointDetail, Converter={StaticResource BoolToVis}}">
+            <TextBlock DockPanel.Dock="Top" Text="{Binding PropertiesHeader}" Style="{DynamicResource BodyStrongTextBlockStyle}" Margin="0,0,0,4"
+                       TextTrimming="CharacterEllipsis" />
+            <DataGrid ItemsSource="{Binding Properties}" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="90"
+                      HeadersVisibility="None" GridLinesVisibility="Horizontal" RowHeight="28" AutomationProperties.Name="Properties">
+              <DataGrid.Columns>
+                <DataGridTextColumn Binding="{Binding Name}" Width="150">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock"><Setter Property="Opacity" Value="0.8" /><Setter Property="TextTrimming" Value="CharacterEllipsis" /></Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Display}" Width="*">
+                  <DataGridTextColumn.ElementStyle>
+                    <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding Display}" /><Setter Property="TextTrimming" Value="CharacterEllipsis" /></Style>
+                  </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+          </DockPanel>
+
+          <!-- A note for the selected point (the device when no point is selected). Saved with the job; never written to a device. -->
+          <Expander Grid.Row="2" Margin="14,8,14,12" Visibility="{Binding CanNote, Converter={StaticResource BoolToVis}}">
+            <Expander.Header>
+              <TextBlock Text="{Binding NoteTitle}" TextTrimming="CharacterEllipsis" />
+            </Expander.Header>
+            <TextBox Text="{Binding NoteText, UpdateSourceTrigger=PropertyChanged}" Height="64" Margin="0,4,0,0"
+                     AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Note"
+                     ToolTip="Your own note, e.g. what you found or why you left something overridden. Saved in the job file; never sent to the device." />
+          </Expander>
+        </Grid>
+      </Border>
+    </Grid>
+  </DockPanel>
 </Window>

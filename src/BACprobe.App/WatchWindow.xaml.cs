@@ -8,6 +8,7 @@ public partial class WatchWindow : Window
     public WatchWindow(WatchViewModel viewModel)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         DataContext = viewModel;
         Loaded += async (_, _) => await viewModel.StartAsync();
         Closed += (_, _) => viewModel.Dispose();

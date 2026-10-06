@@ -34,7 +34,7 @@
     <TextBlock Grid.Row="2" Text="{Binding Body}" TextWrapping="Wrap" Opacity="0.85" Margin="0,16,0,0" />
 
     <Border Grid.Row="3" Margin="0,14,0,0" Padding="12,10" CornerRadius="4" BorderThickness="1"
-            BorderBrush="Firebrick" Background="#22B22222" Visibility="{Binding WarningVisibility}">
+            BorderBrush="{DynamicResource FaultBrush}" Background="{DynamicResource DangerBackgroundBrush}" Visibility="{Binding WarningVisibility}">
       <TextBlock Text="{Binding Warning}" TextWrapping="Wrap" FontWeight="SemiBold" />
     </Border>
 

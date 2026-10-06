@@ -53,9 +53,9 @@
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
               <Style.Triggers>
-                <DataTrigger Binding="{Binding Kind}" Value="Different"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
-                <DataTrigger Binding="{Binding Kind}" Value="OnlyInA"><Setter Property="Foreground" Value="SteelBlue" /></DataTrigger>
-                <DataTrigger Binding="{Binding Kind}" Value="OnlyInB"><Setter Property="Foreground" Value="SteelBlue" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Different"><Setter Property="Foreground" Value="{DynamicResource AlarmBrush}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="OnlyInA"><Setter Property="Foreground" Value="{DynamicResource InfoBrush}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="OnlyInB"><Setter Property="Foreground" Value="{DynamicResource InfoBrush}" /></DataTrigger>
               </Style.Triggers>
             </Style>
           </DataGridTextColumn.ElementStyle>
@@ -74,7 +74,7 @@
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
               <Style.Triggers>
-                <DataTrigger Binding="{Binding Kind}" Value="Different"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Different"><Setter Property="Foreground" Value="{DynamicResource AlarmBrush}" /></DataTrigger>
               </Style.Triggers>
             </Style>
           </DataGridTextColumn.ElementStyle>

@@ -10,6 +10,7 @@ public partial class TrendWindow : Window
     public TrendWindow(TrendViewModel viewModel)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         DataContext = viewModel;
         Loaded += async (_, _) => await viewModel.LoadAsync();
         Closed += (_, _) => viewModel.Dispose();

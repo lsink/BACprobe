@@ -12,6 +12,7 @@ public partial class MstpWindow : Window
     public MstpWindow(MstpViewModel viewModel)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         _vm = viewModel;
         DataContext = viewModel;
 

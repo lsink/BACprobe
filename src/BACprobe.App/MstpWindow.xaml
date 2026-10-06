@@ -42,7 +42,7 @@
               ToolTip="Show a made-up trunk with a dead node, a low Max Master and some noise, to see what the monitor reports." />
     </WrapPanel>
 
-    <Border Grid.Row="1" Margin="0,10,0,0" Padding="10,6" CornerRadius="4" Background="#33FF8C00"
+    <Border Grid.Row="1" Margin="0,10,0,0" Padding="10,6" CornerRadius="4" Background="{DynamicResource WarningBackgroundBrush}"
             Visibility="{Binding HasLatencyWarning, Converter={StaticResource BoolToVis}}">
       <TextBlock Text="{Binding LatencyWarning}" TextWrapping="Wrap" />
     </Border>
@@ -79,7 +79,7 @@
 
       <DockPanel Grid.Column="2">
         <TextBlock DockPanel.Dock="Top" Text="What looks wrong" FontWeight="SemiBold" Margin="0,0,0,4" />
-        <Border BorderThickness="1" BorderBrush="#33808080" CornerRadius="4" Padding="8,4">
+        <Border BorderThickness="1" BorderBrush="{DynamicResource PanelBorderBrush}" CornerRadius="4" Padding="8,4">
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding Findings}" />
           </ScrollViewer>
@@ -107,7 +107,7 @@
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
               <Style.Triggers>
-                <DataTrigger Binding="{Binding IsError}" Value="True"><Setter Property="Foreground" Value="Firebrick" /></DataTrigger>
+                <DataTrigger Binding="{Binding IsError}" Value="True"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /></DataTrigger>
               </Style.Triggers>
             </Style>
           </DataGridTextColumn.ElementStyle>

@@ -8,6 +8,7 @@ public partial class LiveTrendWindow : Window
     public LiveTrendWindow(LiveTrendViewModel viewModel)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         DataContext = viewModel;
         Loaded += (_, _) => viewModel.Start();
         Closed += (_, _) => viewModel.Dispose(); // stops sampling: no more requests to the controller

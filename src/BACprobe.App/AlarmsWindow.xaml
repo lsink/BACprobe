@@ -46,9 +46,9 @@
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
               <Style.Triggers>
-                <DataTrigger Binding="{Binding Kind}" Value="LifeSafety"><Setter Property="Foreground" Value="Red" /><Setter Property="FontWeight" Value="Bold" /></DataTrigger>
-                <DataTrigger Binding="{Binding Kind}" Value="Fault"><Setter Property="Foreground" Value="IndianRed" /></DataTrigger>
-                <DataTrigger Binding="{Binding Kind}" Value="Alarm"><Setter Property="Foreground" Value="DarkOrange" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="LifeSafety"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /><Setter Property="FontWeight" Value="Bold" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Fault"><Setter Property="Foreground" Value="{DynamicResource FaultBrush}" /></DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Alarm"><Setter Property="Foreground" Value="{DynamicResource AlarmBrush}" /></DataTrigger>
               </Style.Triggers>
             </Style>
           </DataGridTextColumn.ElementStyle>
@@ -60,7 +60,7 @@
     </DataGrid>
 
     <!-- The selected alarm: what it means, likely cause, next step; and the two things a tech can do with it -->
-    <Border Grid.Row="3" BorderThickness="1" BorderBrush="#33808080" CornerRadius="4" Padding="10,8" Margin="0,12,0,0">
+    <Border Grid.Row="3" BorderThickness="1" BorderBrush="{DynamicResource PanelBorderBrush}" CornerRadius="4" Padding="10,8" Margin="0,12,0,0">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Top" Width="220">
           <Button Content="Acknowledge..." Padding="14,4" Command="{Binding AcknowledgeCommand}"
@@ -76,7 +76,7 @@
 
     <TextBlock Grid.Row="4" Text="Could not check everything" FontWeight="SemiBold" Margin="0,12,0,4"
                Visibility="{Binding HasFindings, Converter={StaticResource BoolToVisibility}}" />
-    <Border Grid.Row="5" BorderThickness="1" BorderBrush="#33808080" CornerRadius="4" Padding="8,4" MaxHeight="160"
+    <Border Grid.Row="5" BorderThickness="1" BorderBrush="{DynamicResource PanelBorderBrush}" CornerRadius="4" Padding="8,4" MaxHeight="160"
             Visibility="{Binding HasFindings, Converter={StaticResource BoolToVisibility}}">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <ItemsControl ItemsSource="{Binding Findings}" />

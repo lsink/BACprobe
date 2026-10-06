@@ -33,7 +33,7 @@
         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="150">
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="IndianRed" />
+              <Setter Property="Foreground" Value="{DynamicResource FaultBrush}" />
               <Setter Property="FontWeight" Value="SemiBold" />
               <Setter Property="ToolTip" Value="{Binding StatusTooltip}" />
             </Style>

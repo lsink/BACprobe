@@ -12,6 +12,7 @@ public partial class LessonWindow : Window
     private LessonWindow()
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         LessonList.ItemsSource = Lessons.All;
         Closed += (_, _) => _open = null;
     }

@@ -9,6 +9,7 @@ public partial class FindWindow : Window
     public FindWindow(FindViewModel viewModel)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         DataContext = viewModel;
         Loaded += (_, _) =>
         {

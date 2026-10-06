@@ -11,6 +11,7 @@ public partial class AlarmsWindow : Window
     public AlarmsWindow(AlarmsViewModel viewModel)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         DataContext = _vm = viewModel;
         Loaded += (_, _) => { if (viewModel.RefreshCommand.CanExecute(null)) viewModel.RefreshCommand.Execute(null); };
         Closed += (_, _) => viewModel.Dispose();

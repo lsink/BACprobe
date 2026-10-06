@@ -18,6 +18,7 @@ public partial class PromptWindow : Window
     private PromptWindow(PromptContent content, IReadOnlyList<PromptButton> buttons, int focusIndex)
     {
         InitializeComponent();
+        WindowFit.Apply(this);
         DataContext = new PromptViewModel(content);
 
         for (var i = 0; i < buttons.Count; i++)

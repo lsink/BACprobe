@@ -71,6 +71,13 @@ public sealed class DeviceRow(DiscoveredDevice d) : ObservableObject
     public string MaxApdu => d.MaxApdu.ToString();
     public string Clock => d.ClockSkew is { } s ? (s.Duration() < DeviceHealth.ClockSkewLimit ? "ok" : DeviceHealth.ShortSkew(s)) : "-";
 
+    /// <summary>The group the device list shows it under: this subnet first, then each routed network.</summary>
+    public string NetworkLabel => d.Network == 0 ? "This network" : $"Network {d.Network}";
+    public int NetworkSort => d.Network;
+
+    /// <summary>Hover text in the device list, which only has room for the number and name.</summary>
+    public string Tooltip => $"{Address}{Environment.NewLine}{Vendor}  {Model}  {Firmware}";
+
     /// <summary>The device's details were read: show them.</summary>
     public void Refresh() => OnPropertyChanged(string.Empty);
 }
@@ -353,16 +360,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
-    [NotifyPropertyChangedFor(nameof(ShowOverridePanel))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint))]
     private bool _canWriteSelected;
 
     /// <summary>Read-only mode: browsing and reading only. The override panel is hidden and writes are refused.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowOverridePanel))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(WindowTitle))]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
-    private bool _readOnlyMode = ReadOnlySetting.Load();
+    private bool _readOnlyMode = AppSettings.Current.ReadOnly;
 
     public bool ShowOverridePanel => CanWriteSelected && !ReadOnlyMode;
+
+    /// <summary>A writable point while read-only is on: say why the override controls are not there.</summary>
+    public bool ShowReadOnlyHint => CanWriteSelected && ReadOnlyMode;
+
+    public string WindowTitle => ReadOnlyMode ? "BACprobe - READ-ONLY" : "BACprobe";
 
     // Out_Of_Service: offered for any point that has the property (inputs too), hidden in read-only mode.
     [ObservableProperty]
@@ -378,7 +390,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnReadOnlyModeChanged(bool value)
     {
-        ReadOnlySetting.Save(value);
+        AppSettings.Update(s => s with { ReadOnly = value });
         if (_writer is not null) _writer.ReadOnly = value;
         OnPropertyChanged(nameof(ShowOutOfServicePanel));
     }
@@ -425,8 +437,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         catch (Exception) { Status += " (Could not read the point back; check it before you leave.)"; }
     }
 
-    [ObservableProperty] private DeviceRow? _selectedDevice;
-    [ObservableProperty] private ObjectRow? _selectedObject;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDeviceCard))]
+    private DeviceRow? _selectedDevice;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDeviceCard), nameof(ShowPointDetail))]
+    private ObjectRow? _selectedObject;
+
+    /// <summary>The right-hand pane shows the device's details while no point is selected, and the point once one is.</summary>
+    public bool ShowDeviceCard => SelectedDevice is not null && SelectedObject is null;
+    public bool ShowPointDetail => SelectedObject is not null;
     [ObservableProperty] private string _propertiesHeader = "Properties";
     // Result of the last export or job save: a visible confirmation with quick access to the file.
     [ObservableProperty]
@@ -436,7 +457,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _resultMessage = "";
 
     [ObservableProperty] private string _preflightSummary = "";
-    [ObservableProperty] private bool _preflightExpanded = true;
+    /// <summary>The worst pre-flight result, for colouring its label; null while checking or with no adapter.</summary>
+    [ObservableProperty] private PreflightSeverity? _preflightState;
     // Live values: the object list refreshes itself on a timer.
     private CancellationTokenSource? _liveCts;
     public IReadOnlyList<int> LiveIntervals { get; } = [1, 2, 5, 10];
@@ -468,8 +490,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private IReadOnlyList<SavedDevice>? _baseline;
     private string? _baselineName;
     [ObservableProperty] private bool _hasNetworkCheck;
-    [ObservableProperty] private bool _networkCheckExpanded;
     [ObservableProperty] private string _networkCheckSummary = "";
+    /// <summary>The worst finding, for colouring the network check's label; null when there is nothing to report.</summary>
+    [ObservableProperty] private FindingSeverity? _networkCheckState;
 
     private void ShowNetworkCheck(IReadOnlyList<NetworkFinding> conflicts, IReadOnlyList<DiscoveredDevice> found, NetworkMap map)
     {
@@ -488,7 +511,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var routed = map.Networks.Count(n => !n.IsLocal);
         NetworkCheckSummary = $"{icon} Network check{(_baselineName is null ? "" : $" (compared with job \"{_baselineName}\")")}: {NetworkCheck.Summarize(findings)}" +
                               (routed > 0 ? $"  -  {routed} routed network(s)" : "");
-        NetworkCheckExpanded = worst == FindingSeverity.Problem; // open by itself only for something that needs fixing
+        NetworkCheckState = worst;
         HasNetworkCheck = true;
     }
 
@@ -500,7 +523,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         HasNetworkCheck = false;
     }
 
-    [ObservableProperty] private string _jobName = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JobButtonText))]
+    private string _jobName = "";
+
+    public string JobButtonText => JobName.Trim().Length == 0 ? "Job" : $"Job: {JobName.Trim()}";
     [ObservableProperty] private string _jobNotes = "";
     [ObservableProperty] private string _offlineBanner = "";
     [ObservableProperty]
@@ -664,6 +691,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var adapter = SelectedAdapter;
         if (adapter is null) return;
         PreflightSummary = "Checking...";
+        PreflightState = null;
         // Off the UI thread: reading the firewall rules takes a moment.
         var results = await Task.Run(() => Core.Networking.Preflight.Run(adapter.Info));
         if (!ReferenceEquals(adapter, SelectedAdapter)) return; // the tech picked another adapter meanwhile
@@ -671,15 +699,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _firewallWarning = results.FirstOrDefault(r => r.Check == PreflightRules.FirewallCheckName && r.Severity != PreflightSeverity.Pass);
         PreflightPassed = PreflightRules.CanProceed(results);
 
-        // Collapse the list when everything is fine; open it when the tech needs to read something.
+        // One short label in the toolbar; the full list is in its drop-down, and on the start page until the first scan.
         var failures = results.Count(r => r.Severity == PreflightSeverity.Fail);
         var warnings = results.Count(r => r.Severity == PreflightSeverity.Warning);
-        var warned = string.Join(", ", results.Where(r => r.Severity == PreflightSeverity.Warning).Select(r => r.Check));
-        PreflightSummary = failures > 0
-            ? $"✖ {failures} problem(s) to fix before you can scan - details below"
-            : warnings > 0 ? $"⚠ Ready, with {warnings} warning(s): {warned} - click to read" : "✔ All pre-flight checks passed";
-        PreflightExpanded = failures > 0; // a warning does not block scanning, so it stays one line until the tech opens it
-        Status = PreflightPassed ? "Ready. Click Scan to find devices." : "Fix the red items above, then click Re-check.";
+        PreflightState = failures > 0 ? PreflightSeverity.Fail : warnings > 0 ? PreflightSeverity.Warning : PreflightSeverity.Pass;
+        PreflightSummary = failures > 0 ? $"✖ Can't scan: {failures} problem(s)"
+            : warnings > 0 ? $"⚠ Ready, {warnings} warning(s)" : "✔ Ready";
+        Status = PreflightPassed ? "Ready. Click Scan to find devices." : "Fix the red items in the pre-flight list, then click Re-check.";
     }
 
     private bool CanScan() => SelectedAdapter is not null && PreflightPassed && !IsScanning && !IsExporting;
@@ -745,7 +771,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                     ? $"No devices answered. Likely cause: Windows Firewall ({fw.Message}) Next step: {fw.NextStep} Then scan again."
                     : "No devices answered. Likely cause: wrong adapter or subnet, a firewall blocking UDP 47808, " +
                       "or devices on another subnet behind a BBMD. Next step: try another adapter or allow BACprobe through Windows Firewall.";
-                if (_firewallWarning is not null) PreflightExpanded = true; // show the firewall details right away
                 return;
             }
             // Show the devices now and fill in names as each one answers: one slow or unreachable device must not hold up the list.

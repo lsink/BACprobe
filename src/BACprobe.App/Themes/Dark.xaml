@@ -1,0 +1,27 @@
+<!-- Colours that mean something (alarm, fault, override...), tuned to read on the Fluent dark background.
+     Light.xaml has the same keys. Use them with DynamicResource so a theme switch repaints everything. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="FaultBrush" Color="#FF7B72" />
+  <SolidColorBrush x:Key="AlarmBrush" Color="#FF9E4F" />
+  <SolidColorBrush x:Key="OverrideBrush" Color="#E8B931" />
+  <SolidColorBrush x:Key="OkBrush" Color="#5FD08A" />
+  <SolidColorBrush x:Key="InfoBrush" Color="#7CB8FF" />
+  <SolidColorBrush x:Key="ChangedBrush" Color="#4FC3F7" />
+  <SolidColorBrush x:Key="PanelBorderBrush" Color="#3DFFFFFF" />
+  <SolidColorBrush x:Key="PaneHeaderBrush" Color="#14FFFFFF" />
+  <SolidColorBrush x:Key="BannerBrush" Color="#A85400" />
+  <SolidColorBrush x:Key="BannerTextBrush" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="SuccessBackgroundBrush" Color="#2230A050" />
+  <SolidColorBrush x:Key="WarningBackgroundBrush" Color="#33FF8C00" />
+  <SolidColorBrush x:Key="DangerBackgroundBrush" Color="#33FF5A4F" />
+  <!-- The Fluent DataGrid's own keys: its default selected row is pale lavender, unreadable under white text in dark mode -->
+  <SolidColorBrush x:Key="DataGridRowSelectedBackgroundThemeBrush" Color="#2D5B8C" />
+  <SolidColorBrush x:Key="DataGridRowSelectedForegroundThemeBrush" Color="#FFFFFF" />
+  <!-- Lists (devices, lessons) select the same way as grids, instead of the accent colour -->
+  <SolidColorBrush x:Key="ListBoxItemSelectedBackgroundThemeBrush" Color="#2D5B8C" />
+  <SolidColorBrush x:Key="ListBoxItemSelectedBackgroundPointerOverThemeBrush" Color="#356A9F" />
+  <SolidColorBrush x:Key="ListBoxItemSelectedBackgroundPressedThemeBrush" Color="#264E78" />
+  <SolidColorBrush x:Key="ListBoxItemSelectedForegroundThemeBrush" Color="#FFFFFF" />
+  <Thickness x:Key="ListBoxItemPadding">10,6</Thickness>
+</ResourceDictionary>

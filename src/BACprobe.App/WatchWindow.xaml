@@ -30,7 +30,7 @@
         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*" MinWidth="140">
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="Firebrick" />
+              <Setter Property="Foreground" Value="{DynamicResource FaultBrush}" />
               <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             </Style>
           </DataGridTextColumn.ElementStyle>

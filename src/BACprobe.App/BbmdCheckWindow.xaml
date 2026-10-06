@@ -22,7 +22,7 @@
     </DockPanel>
 
     <!-- What looks wrong, worst first; each with its likely cause and next step -->
-    <Border Grid.Row="1" BorderThickness="1" BorderBrush="#33808080" CornerRadius="4" Padding="8,4">
+    <Border Grid.Row="1" BorderThickness="1" BorderBrush="{DynamicResource PanelBorderBrush}" CornerRadius="4" Padding="8,4">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <ItemsControl ItemsSource="{Binding Findings}" />
       </ScrollViewer>
