@@ -12,6 +12,8 @@
 
     <DockPanel Margin="0,0,0,10">
       <WrapPanel DockPanel.Dock="Right">
+        <Button Content="Chart..." Padding="14,4" Margin="0,0,12,0" Click="OnChart" AutomationProperties.Name="Chart watched points"
+                ToolTip="Chart the selected points together (Ctrl+click to pick several), or the whole list if one or none is selected. Up to 8 lines." />
         <Button Content="Remove" Padding="14,4" Command="{Binding RemoveSelectedCommand}" ToolTip="Take the selected point off the watch list." />
         <Button Content="Clear all" Padding="14,4" Margin="6,0,0,0" Command="{Binding ClearCommand}" />
         <Button Content="Refresh" Padding="14,4" Margin="6,0,0,0" Command="{Binding RefreshCommand}"
@@ -20,8 +22,8 @@
       <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
     </DockPanel>
 
-    <DataGrid Grid.Row="1" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}" AutoGenerateColumns="False" IsReadOnly="True"
-              SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+    <DataGrid x:Name="RowsGrid" Grid.Row="1" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}" AutoGenerateColumns="False" IsReadOnly="True"
+              SelectionMode="Extended" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="220" />
         <DataGridTextColumn Header="Object" Binding="{Binding ObjectId}" Width="90" />
