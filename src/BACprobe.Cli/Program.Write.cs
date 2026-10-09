@@ -75,17 +75,7 @@ internal static partial class Program
         Console.WriteLine(request.ConfirmationText());
         Console.WriteLine();
 
-        if (!opts.ContainsKey("yes"))
-        {
-            if (Console.IsInputRedirected)
-                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
-            Console.Write("Type y to go ahead, anything else cancels: ");
-            if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("Cancelled. Nothing was written.");
-                return 0;
-            }
-        }
+        if (ConfirmOrExit(opts, "Type y to go ahead, anything else cancels: ", "Cancelled. Nothing was written.") is { } exit) return exit;
 
         var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
         var outcome = await writer.ExecuteAsync(request);
@@ -153,17 +143,7 @@ internal static partial class Program
         var request = new PropertyWriteRequest(device, deviceName, id, pointName, prop, value, shown, current.Display);
         Console.WriteLine();
         PrintExplanation(Prompts.ForPropertyWrite(request));
-        if (!opts.ContainsKey("yes"))
-        {
-            if (Console.IsInputRedirected)
-                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
-            Console.Write("Type y to go ahead, anything else cancels: ");
-            if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("Cancelled. Nothing was written.");
-                return 0;
-            }
-        }
+        if (ConfirmOrExit(opts, "Type y to go ahead, anything else cancels: ", "Cancelled. Nothing was written.") is { } exit) return exit;
 
         var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
         var outcome = await writer.WritePropertyAsync(request);

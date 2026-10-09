@@ -55,12 +55,10 @@ internal static partial class Program
 
         Console.WriteLine();
         Console.WriteLine(MstpActive.ConfirmationText(port, baud, result.Plan));
-        if (!opts.ContainsKey("yes"))
+        switch (AskToGoAhead(opts, "Type JOIN to continue, anything else to stop: ", expected: "JOIN"))
         {
-            if (Console.IsInputRedirected) return (null, "Confirmation needed: add --yes to join the trunk (nothing was transmitted).");
-            Console.Write("Type JOIN to continue, anything else to stop: ");
-            if (!string.Equals(Console.ReadLine()?.Trim(), "JOIN", StringComparison.OrdinalIgnoreCase))
-                return (null, "Cancelled. Nothing was transmitted.");
+            case Consent.CannotAsk: return (null, "Confirmation needed: add --yes to join the trunk (nothing was transmitted).");
+            case Consent.Cancelled: return (null, "Cancelled. Nothing was transmitted.");
         }
 
         try

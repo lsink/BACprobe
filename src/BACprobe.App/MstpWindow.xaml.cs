@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Input;
-using Microsoft.Win32;
 
 namespace BACprobe.App;
 
@@ -17,20 +16,11 @@ public partial class MstpWindow : Window
         DataContext = viewModel;
 
         viewModel.PickOpenPath = () =>
-        {
-            var dlg = new OpenFileDialog { Title = "Open an MS/TP capture", Filter = "MS/TP capture (*.bin)|*.bin|All files (*.*)|*.*" };
-            return dlg.ShowDialog(this) == true ? dlg.FileName : null;
-        };
+            FileDialogs.Open(this, "Open an MS/TP capture", "MS/TP capture (*.bin)|*.bin|All files (*.*)|*.*");
         viewModel.PickSavePath = suggested =>
-        {
-            var dlg = new SaveFileDialog { Title = "Save the MS/TP capture", FileName = suggested, Filter = "MS/TP capture (*.bin)|*.bin", DefaultExt = ".bin", AddExtension = true, OverwritePrompt = true };
-            return dlg.ShowDialog(this) == true ? dlg.FileName : null;
-        };
+            FileDialogs.Save(this, "Save the MS/TP capture", suggested, "MS/TP capture (*.bin)|*.bin", ".bin");
         viewModel.PickPcapPath = suggested =>
-        {
-            var dlg = new SaveFileDialog { Title = "Export frames for Wireshark", FileName = suggested, Filter = "Packet capture (*.pcap)|*.pcap", DefaultExt = ".pcap", AddExtension = true, OverwritePrompt = true };
-            return dlg.ShowDialog(this) == true ? dlg.FileName : null;
-        };
+            FileDialogs.Save(this, "Export frames for Wireshark", suggested, "Packet capture (*.pcap)|*.pcap", ".pcap");
         // Follow the newest frame, unless the tech paused to read.
         viewModel.LogChanged += () =>
         {

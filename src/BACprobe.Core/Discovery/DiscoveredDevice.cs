@@ -11,6 +11,12 @@ public sealed class DiscoveredDevice
     public required ushort VendorId { get; init; }
 
     public string? ObjectName { get; set; }
+
+    /// <summary>Its name, or "device 1001" when it has none: for sentences.</summary>
+    public string DisplayName => ObjectName ?? $"device {InstanceId}";
+
+    /// <summary>Its name, or "Device 1001" when it has none: as a device's name in exports and job files.</summary>
+    public string ExportName => ObjectName ?? $"Device {InstanceId}";
     public string? VendorName { get; set; }
     public string? ModelName { get; set; }
     public string? FirmwareRevision { get; set; }

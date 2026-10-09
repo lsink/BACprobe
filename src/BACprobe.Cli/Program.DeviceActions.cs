@@ -62,26 +62,15 @@ internal static partial class Program
         using var _ = svc;
         if (kind != DeviceActionKind.Unmute) await svc.EnrichAsync([device]); // its name, and how far off its clock is (a muted device would only time out)
 
-        var request = new DeviceActionRequest(device, device.ObjectName ?? $"device {device.InstanceId}", kind, minutes, password);
+        var request = new DeviceActionRequest(device, device.DisplayName, kind, minutes, password);
         if (request.Problem is { } problem) return Fail(problem);
         Console.WriteLine();
         PrintExplanation(Prompts.ForDeviceAction(request));
 
-        if (!opts.ContainsKey("yes"))
-        {
-            if (Console.IsInputRedirected)
-                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
-            if (request.TypeToConfirm is { } expected)
-            {
-                Console.Write($"Type the device number ({expected}) to go ahead, anything else cancels: ");
-                if (Console.ReadLine()?.Trim() != expected) return Cancelled();
-            }
-            else
-            {
-                Console.Write("Type y to go ahead, anything else cancels: ");
-                if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase)) return Cancelled();
-            }
-        }
+        var exit = request.TypeToConfirm is { } expected
+            ? ConfirmOrExit(opts, $"Type the device number ({expected}) to go ahead, anything else cancels: ", "Cancelled. Nothing was sent.", expected)
+            : ConfirmOrExit(opts, "Type y to go ahead, anything else cancels: ", "Cancelled. Nothing was sent.");
+        if (exit is { } code) return code;
 
         var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
         var outcome = await writer.RunDeviceActionAsync(request);
@@ -92,11 +81,5 @@ internal static partial class Program
                               (password is null ? "" : " --password <password>"));
         Console.WriteLine($"Logged to {WriteLog.DefaultPath}");
         return 0;
-
-        static int Cancelled()
-        {
-            Console.WriteLine("Cancelled. Nothing was sent.");
-            return 0;
-        }
     }
 }

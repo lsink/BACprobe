@@ -35,8 +35,7 @@ internal static partial class Program
         var devB = found.FirstOrDefault(d => d.InstanceId == b);
         foreach (var (inst, dev) in new[] { (a, devA), (b, devB) })
             if (dev is null)
-                return Fail($"Device {inst} did not answer Who-Is.\n  Likely cause: wrong instance number, wrong adapter/subnet, or the device is behind a router/BBMD.\n" +
-                            "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
+                return Fail(NoWhoIsAnswer(inst));
         await svc.EnrichAsync([devA!, devB!]);
         string Label(DiscoveredDevice d) => $"{d.InstanceId} \"{d.ObjectName ?? "?"}\"";
         Console.WriteLine($"A = device {Label(devA!)} at {devA!.AddressText}");

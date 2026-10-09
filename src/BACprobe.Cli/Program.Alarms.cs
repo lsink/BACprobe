@@ -38,9 +38,7 @@ internal static partial class Program
         var wait = IntOpt(opts, "wait", low >= 0 ? 3 : 5);
         var devices = await svc.WhoIsAsync(low, high, TimeSpan.FromSeconds(wait));
         if (devices.Count == 0)
-            return Fail((low >= 0 ? $"Device {low} did not answer Who-Is." : "No devices answered Who-Is.") + "\n" +
-                        "  Likely cause: wrong instance number, wrong adapter/subnet, or the devices are behind a router/BBMD.\n" +
-                        "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
+            return Fail(NoWhoIsAnswer(low >= 0 ? $"Device {low} did not answer Who-Is." : "No devices answered Who-Is."));
         await svc.EnrichAsync(devices);
 
         var reader = svc.CreateAlarmReader();
@@ -96,7 +94,7 @@ internal static partial class Program
             try
             {
                 var classes = await svc.ReadNotificationClassesAsync(d);
-                if (classes.Count > 0) requests.Add(new AlarmListenRequest(d, d.ObjectName ?? $"device {d.InstanceId}", classes, me));
+                if (classes.Count > 0) requests.Add(new AlarmListenRequest(d, d.DisplayName, classes, me));
                 else Console.WriteLine($"Device {d.InstanceId}: no notification classes, so it does not send alarms itself. Skipped.");
             }
             catch (Exception ex) { Console.WriteLine($"Device {d.InstanceId}: could not read its objects ({ex.Message}). Skipped."); }
@@ -105,17 +103,7 @@ internal static partial class Program
 
         Console.WriteLine();
         foreach (var r in requests) PrintExplanation(Prompts.ForAlarmListen(r));
-        if (!opts.ContainsKey("yes"))
-        {
-            if (Console.IsInputRedirected)
-                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
-            Console.Write($"Type y to add BACprobe to {requests.Sum(r => r.NotificationClasses.Count)} recipient list(s) on {requests.Count} device(s): ");
-            if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("Cancelled. Nothing was changed.");
-                return 0;
-            }
-        }
+        if (ConfirmOrExit(opts, $"Type y to add BACprobe to {requests.Sum(r => r.NotificationClasses.Count)} recipient list(s) on {requests.Count} device(s): ", "Cancelled. Nothing was changed.") is { } exit) return exit;
 
         var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
         svc.AlarmNotified += n => Console.WriteLine(n.Text);
@@ -167,20 +155,10 @@ internal static partial class Program
             return 0;
         }
 
-        var request = new AlarmAckRequest(e, device.ObjectName ?? $"device {device.InstanceId}", AlarmAckRequest.DefaultSource);
+        var request = new AlarmAckRequest(e, device.DisplayName, AlarmAckRequest.DefaultSource);
         Console.WriteLine();
         PrintExplanation(Prompts.ForAck(request));
-        if (!opts.ContainsKey("yes"))
-        {
-            if (Console.IsInputRedirected)
-                return Fail("This needs a person to confirm. Run it in a terminal, or add --yes if you are scripting it.");
-            Console.Write("Type y to acknowledge, anything else cancels: ");
-            if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("Cancelled. Nothing was sent.");
-                return 0;
-            }
-        }
+        if (ConfirmOrExit(opts, "Type y to acknowledge, anything else cancels: ", "Cancelled. Nothing was sent.") is { } exit) return exit;
 
         var writer = svc.CreateWriter(new WriteLog(WriteLog.DefaultPath), new OverrideTracker());
         var outcome = await writer.AcknowledgeAsync(request);

@@ -36,12 +36,12 @@ public static class PointExporter
     public static async Task<ExportDevice> CollectAsync(DeviceBrowser browser, DiscoveredDevice device,
         IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        var label = device.ObjectName ?? $"device {device.InstanceId}";
+        var label = device.DisplayName;
         progress?.Report($"Reading the object list of {label}...");
         var ids = await browser.ReadObjectListAsync(ct);
         var counter = new Progress<int>(n => progress?.Report($"Reading {label}: {n} of {ids.Count} objects..."));
         var summaries = await browser.ReadSummariesAsync(ids, counter, ct);
-        return new ExportDevice(device, device.ObjectName ?? $"Device {device.InstanceId}", summaries);
+        return new ExportDevice(device, device.ExportName, summaries);
     }
 
     /// <summary>

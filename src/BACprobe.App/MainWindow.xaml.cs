@@ -6,7 +6,6 @@ using System.Windows.Data;
 using BACprobe.Core.Export;
 using BACprobe.Core.Settings;
 using BACprobe.Core.Writing;
-using Microsoft.Win32;
 
 namespace BACprobe.App;
 
@@ -209,7 +208,7 @@ public partial class MainWindow : Window
             vm.ShowAlarms = alarms => new AlarmsWindow(alarms) { Owner = this }.Show();
             vm.ShowMstp = mstp => new MstpWindow(mstp) { Owner = this }.Show();
             vm.PickTrendFile = suggested =>
-                TrendWindow.PickFile(OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this, suggested);
+                TrendWindow.PickFile(FileDialogs.ActiveOwner(this), suggested);
             // Trend and alarm windows read through the connection that opened them: close them when it is replaced.
             vm.ConnectionReset += () =>
             {
@@ -217,41 +216,13 @@ public partial class MainWindow : Window
             };
             vm.PickExportFile = suggested =>
             {
-                var dialog = new SaveFileDialog
-                {
-                    Title = "Export point list",
-                    FileName = suggested,
-                    Filter = "Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|EDE file (*.csv)|*.csv",
-                    AddExtension = true,
-                    OverwritePrompt = true,
-                };
-                if (dialog.ShowDialog(this) != true) return null;
-                var format = dialog.FilterIndex switch { 1 => ExportFormat.Xlsx, 3 => ExportFormat.Ede, _ => ExportFormat.Csv };
-                return (dialog.FileName, format);
+                if (FileDialogs.SaveWithType(this, "Export point list", suggested,
+                        "Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|EDE file (*.csv)|*.csv") is not { } picked) return null;
+                var format = picked.FilterIndex switch { 1 => ExportFormat.Xlsx, 3 => ExportFormat.Ede, _ => ExportFormat.Csv };
+                return (picked.Path, format);
             };
-            vm.PickJobSavePath = suggested =>
-            {
-                var dialog = new SaveFileDialog
-                {
-                    Title = "Save job",
-                    FileName = suggested,
-                    Filter = "BACprobe job (*.bacprobe)|*.bacprobe",
-                    DefaultExt = ".bacprobe",
-                    AddExtension = true,
-                    OverwritePrompt = true,
-                };
-                return dialog.ShowDialog(this) == true ? dialog.FileName : null;
-            };
-            vm.PickJobOpenPath = () =>
-            {
-                var dialog = new OpenFileDialog
-                {
-                    Title = "Open job",
-                    Filter = "BACprobe job (*.bacprobe)|*.bacprobe|All files (*.*)|*.*",
-                    CheckFileExists = true,
-                };
-                return dialog.ShowDialog(this) == true ? dialog.FileName : null;
-            };
+            vm.PickJobSavePath = suggested => FileDialogs.Save(this, "Save job", suggested, "BACprobe job (*.bacprobe)|*.bacprobe", ".bacprobe");
+            vm.PickJobOpenPath = () => FileDialogs.Open(this, "Open job", "BACprobe job (*.bacprobe)|*.bacprobe|All files (*.*)|*.*");
         }
     }
 

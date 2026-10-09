@@ -1,6 +1,5 @@
 using System.Windows;
 using BACprobe.Core.Export;
-using Microsoft.Win32;
 
 namespace BACprobe.App;
 
@@ -19,15 +18,8 @@ public partial class TrendWindow : Window
     /// <summary>The Save dialog for trend data: Excel or CSV only.</summary>
     public static (string Path, ExportFormat Format)? PickFile(Window owner, string suggestedName)
     {
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export trend data",
-            FileName = suggestedName,
-            Filter = "Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv",
-            AddExtension = true,
-            OverwritePrompt = true,
-        };
-        if (dialog.ShowDialog(owner) != true) return null;
-        return (dialog.FileName, dialog.FilterIndex == 2 ? ExportFormat.Csv : ExportFormat.Xlsx);
+        if (FileDialogs.SaveWithType(owner, "Export trend data", suggestedName, "Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv") is not { } picked)
+            return null;
+        return (picked.Path, picked.FilterIndex == 2 ? ExportFormat.Csv : ExportFormat.Xlsx);
     }
 }

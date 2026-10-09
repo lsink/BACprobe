@@ -38,7 +38,8 @@ public static class ReadLanes
         Func<DiscoveredDevice, Task<T>> read, int maxParallel = DefaultParallel, CancellationToken ct = default)
     {
         var results = new LaneResult<T>?[devices.Count];
-        var index = devices.Select((d, i) => (d, i)).ToDictionary(x => x.d, x => x.i, ReferenceEqualityComparer.Instance);
+        var index = new Dictionary<DiscoveredDevice, int>(ReferenceEqualityComparer.Instance); // by reference: the same device object
+        for (var i = 0; i < devices.Count; i++) index[devices[i]] = i;
         using var gate = new SemaphoreSlim(Math.Max(1, maxParallel));
         var lanes = Plan(devices, sharedMedium).Select(async lane =>
         {

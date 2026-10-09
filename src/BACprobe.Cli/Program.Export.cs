@@ -94,9 +94,7 @@ internal static partial class Program
             var found = await svc.WhoIsAsync(instance, instance, TimeSpan.FromSeconds(IntOpt(opts, "wait", 3)));
             var device = found.FirstOrDefault(d => d.InstanceId == instance);
             if (device is null)
-                return (null, $"Device {instance} did not answer Who-Is.\n" +
-                              "  Likely cause: wrong instance number, wrong adapter/subnet, or the device is behind a router/BBMD.\n" +
-                              "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
+                return (null, NoWhoIsAnswer(instance));
             await svc.EnrichAsync([device]);
             devices = [device];
         }

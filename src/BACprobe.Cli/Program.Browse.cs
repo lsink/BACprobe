@@ -101,9 +101,7 @@ internal static partial class Program
         if (device is null)
         {
             svc.Dispose();
-            return (null, null, $"Device {instance} did not answer Who-Is.\n" +
-                                "  Likely cause: wrong instance number, wrong adapter/subnet, or the device is behind a router/BBMD.\n" +
-                                "  Next step:    run 'bacprobe discover' to list the devices that do answer, or try a longer --wait.");
+            return (null, null, NoWhoIsAnswer(instance));
         }
         return (svc, device, null);
     }

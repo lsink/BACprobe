@@ -703,11 +703,11 @@
           </DockPanel>
 
           <!-- A note for the selected point (the device when no point is selected). Saved with the job; never written to a device. -->
-          <Expander Grid.Row="2" Margin="14,8,14,12" Visibility="{Binding CanNote, Converter={StaticResource BoolToVis}}">
+          <Expander Grid.Row="2" Margin="14,8,14,12" Visibility="{Binding Note.CanNote, Converter={StaticResource BoolToVis}}">
             <Expander.Header>
-              <TextBlock Text="{Binding NoteTitle}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding Note.Title}" TextTrimming="CharacterEllipsis" />
             </Expander.Header>
-            <TextBox Text="{Binding NoteText, UpdateSourceTrigger=PropertyChanged}" Height="64" Margin="0,4,0,0"
+            <TextBox Text="{Binding Note.Text, UpdateSourceTrigger=PropertyChanged}" Height="64" Margin="0,4,0,0"
                      AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Note"
                      ToolTip="Your own note, e.g. what you found or why you left something overridden. Saved in the job file; never sent to the device." />
           </Expander>

@@ -216,7 +216,7 @@ public sealed partial class AlarmsViewModel : ObservableObject, IDisposable
     {
         var row = SelectedRow!;
         var e = row.Event;
-        var request = new AlarmAckRequest(e, e.Device.ObjectName ?? $"device {e.Device.InstanceId}", AlarmAckRequest.DefaultSource);
+        var request = new AlarmAckRequest(e, e.Device.DisplayName, AlarmAckRequest.DefaultSource);
         IsBusy = true;
         try
         {

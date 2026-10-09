@@ -1,6 +1,5 @@
 using System.Windows;
 using BACprobe.Core.Trends;
-using Microsoft.Win32;
 
 namespace BACprobe.App;
 
@@ -35,17 +34,5 @@ public partial class WatchWindow : Window
         new MultiTrendWindow(new MultiTrendViewModel(rows, PickCsv)) { Owner = this }.Show();
     }
 
-    private string? PickCsv(string suggested)
-    {
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export chart",
-            FileName = suggested,
-            Filter = "CSV (*.csv)|*.csv",
-            DefaultExt = ".csv",
-            AddExtension = true,
-            OverwritePrompt = true,
-        };
-        return dialog.ShowDialog(OwnedWindows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this) == true ? dialog.FileName : null;
-    }
+    private string? PickCsv(string suggested) => FileDialogs.Save(FileDialogs.ActiveOwner(this), "Export chart", suggested, "CSV (*.csv)|*.csv", ".csv");
 }
