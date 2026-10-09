@@ -1152,21 +1152,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var collected = new List<ExportDevice>();
         var failed = new List<(DeviceRow, string)>();
-        foreach (var d in Devices.ToList())
+        var rows = Devices.ToList();
+        if (_svc is not { } svc)
         {
-            if (_svc is null)
+            // Offline (a saved job): use what was saved.
+            foreach (var d in rows)
             {
                 if (_pointCache.TryGetValue(d.Instance, out var saved)) collected.Add(saved);
                 else failed.Add((d, "points were not read when the job was saved"));
-                continue;
             }
-            try
+            return (collected, failed);
+        }
+
+        // A few devices at a time on the IP network; one at a time behind each router network (an MS/TP trunk) or over MS/TP.
+        var devices = rows.Select(r => r.Device).ToList();
+        var how = ReadLanes.Describe(ReadLanes.Plan(devices, svc.IsSharedMedium));
+        var done = 0;
+        var results = await ReadLanes.RunAsync(devices, svc.IsSharedMedium, async d =>
+        {
+            var read = await PointExporter.CollectAsync(svc.OpenDevice(d), d,
+                new Progress<string>(m => progress.Report($"{Volatile.Read(ref done)} of {rows.Count} devices read, {how}. {m}")));
+            Interlocked.Increment(ref done);
+            return read;
+        });
+        for (var i = 0; i < results.Count; i++)
+        {
+            if (results[i] is { Value: { } read })
             {
-                var read = await PointExporter.CollectAsync(_svc.OpenDevice(d.Device), d.Device, progress);
-                _pointCache[d.Instance] = read;
+                _pointCache[rows[i].Instance] = read;
                 collected.Add(read);
             }
-            catch (Exception ex) { failed.Add((d, ex.Message)); }
+            else failed.Add((rows[i], results[i].Error?.Message ?? "not read"));
         }
         return (collected, failed);
     }

@@ -63,7 +63,7 @@ public static class Lessons
             "A device that answers slowly, or only accepts small messages, makes everything that talks to it slower.",
             [
                 "BACprobe times a simple read. A second or more usually means the device is busy (a heavy program, many subscribers), the network between you is lossy and retrying, or the device sits at the end of a slow MS/TP trunk.",
-                "Max APDU is the largest message a device accepts. MS/TP devices commonly accept 480 bytes and IP devices 1476. A very small value forces many small requests. Segmentation lets a device send or receive a message in pieces; a device that cannot receive segments can only be read in small requests.",
+                "Max APDU is the largest message a device accepts. MS/TP devices commonly accept 480 bytes and IP devices 1476. A very small value forces many small requests. Segmentation lets a device send or receive a message in pieces; a device that cannot send its answers in pieces can only be read a few points at a time. One that only cannot receive pieces reads normally, because BACprobe's requests are small.",
                 "- Re-check at a quiet time to see whether it is load or the network.",
                 "- Read fewer properties per request from that device.",
             ]),
@@ -145,7 +145,7 @@ public static class Lessons
         (R(@"share the same MAC address"), "duplicate-mac"),
         (R(@"is in the job but did not answer|has moved$|was renamed$|has different firmware or model|is new$"), "saved-job"),
         (R(@"^Two devices are both named"), "device-names"),
-        (R(@"is slow to answer|tiny maximum message size|cannot receive segmented"), "slow-device"),
+        (R(@"is slow to answer|tiny maximum message size|cannot send long answers"), "slow-device"),
         (R(@"clock is off"), "clock"),
         (R(@"is announced by \d+ routers|no router announced it|announces network \d+, but no devices"), "routers"),
         (R(@"foreign devices|^This PC is registered with"), "foreign-device"),

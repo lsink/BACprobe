@@ -32,8 +32,18 @@ public class DeviceHealthTests
         var f = Assert.Single(DeviceHealth.Check([
             Dev(1, "A", 480, BacnetSegmentations.SEGMENTATION_NONE), Dev(2, "B", 480, BacnetSegmentations.SEGMENTATION_NONE), Dev(3, "C")]));
         Assert.Equal(FindingSeverity.Info, f.Severity);
-        Assert.Contains("2 devices", f.Title);
+        Assert.Equal("2 devices cannot send long answers in pieces", f.Title);
         Assert.Contains("1, 2", f.Detail);
+        Assert.Contains("480 bytes", f.Detail);
+    }
+
+    [Fact]
+    public void A_device_that_only_cannot_receive_pieces_is_not_worth_a_note()
+    {
+        // "Send only": it can send long answers in pieces, so it is read at full speed; BACprobe's requests are small.
+        Assert.Empty(DeviceHealth.Check([Dev(1, "A", 1476, BacnetSegmentations.SEGMENTATION_TRANSMIT)]));
+        // Receive only is the one that matters: its answers must fit one message.
+        Assert.Contains(DeviceHealth.Check([Dev(2, "B", 480, BacnetSegmentations.SEGMENTATION_RECEIVE)]), f => f.Title.Contains("long answers"));
     }
 
     [Fact]

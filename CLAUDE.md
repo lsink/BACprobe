@@ -177,3 +177,11 @@ YABE-style batch (all checked against the simulator over UDP, and in the app by 
   CSV with a column per point). App: Watch list "Chart..." (selected rows, else the whole list, up to 8) opens `MultiTrendWindow`, which samples the watch
   rows (no extra traffic) on a timer. Flat lines with mixed units all sit at 50 % and can overlap; the legend and hover still give each value.
 
+Big sites: the segmentation note (`DeviceHealth`) lists only devices that cannot SEND answers in pieces (segmentation none or receive-only), which is
+what forces small batches (`BatchSizeFor` agrees); "send only" devices read at full speed because BACprobe's requests are small. Reading every device
+(app Export all and Find's Read all devices via `CollectAllAsync`; CLI `export --all` / `job save --all`) goes through `Discovery/ReadLanes`: each
+device on the IP network is its own lane, devices behind the same router network share one lane (read one after another, to spare the MS/TP trunk),
+everything is one lane over an MS/TP connection (`DiscoveryService.IsSharedMedium`); up to 4 lanes at once, results in device order, one failure
+does not stop the rest. Measured against the simulator (6 devices x 111 points): 40 s -> 21 s, identical rows. Testing tip: give a test simulator
+its own device numbers (`--first 5001`) if another simulator may be running, or both answer and reads go to the wrong one.
+

@@ -26,6 +26,7 @@ public class LessonsTests
     [InlineData("Device 1001 \"AHU-1\" has moved", "saved-job")]
     [InlineData("Two devices are both named \"AHU-1\"", "device-names")]
     [InlineData("Device 1001 \"AHU-1\" is slow to answer", "slow-device")]
+    [InlineData("3 devices cannot send long answers in pieces", "slow-device")]
     [InlineData("Device 7 \"x\"'s clock is off", "clock")]
     [InlineData("Network 1001 is announced by 2 routers", "routers")]
     [InlineData("10.0.0.1 does not accept foreign devices", "foreign-device")]

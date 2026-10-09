@@ -50,12 +50,15 @@ public static class DeviceHealth
                 "A busy or overloaded controller, a weak link (Wi-Fi, a long router path, an MS/TP trunk that is busy), or many devices being read at once.",
                 "Read it again on its own. If it stays slow, check the network path to it and how busy it or its trunk is."));
 
-        var cannotSegment = devices.Where(d => d.Segmentation is BacnetSegmentations.SEGMENTATION_NONE or BacnetSegmentations.SEGMENTATION_TRANSMIT).ToList();
+        // What slows reading is a device that cannot SEND its answers in pieces (none, or receive-only): every answer must fit one
+        // message. One that can send in pieces but not receive them ("send only") is read at full speed: BACprobe's requests are small.
+        var cannotSegment = devices.Where(d => d.Segmentation is BacnetSegmentations.SEGMENTATION_NONE or BacnetSegmentations.SEGMENTATION_RECEIVE).ToList();
         if (cannotSegment.Count > 0)
             list.Add(new(FindingSeverity.Info,
-                cannotSegment.Count == 1 ? $"{Name(cannotSegment[0])} cannot receive segmented requests" : $"{cannotSegment.Count} devices cannot receive segmented requests",
-                $"Devices: {string.Join(", ", cannotSegment.Take(12).Select(d => d.InstanceId))}{(cannotSegment.Count > 12 ? ", ..." : "")}. Their largest message is {string.Join(" / ", cannotSegment.Select(d => d.MaxApdu).Distinct().Order())} bytes.",
-                "Normal for small controllers. It means BACprobe has to ask them for a few points at a time, so reading a big device is slower.",
+                cannotSegment.Count == 1 ? $"{Name(cannotSegment[0])} cannot send long answers in pieces" : $"{cannotSegment.Count} devices cannot send long answers in pieces",
+                $"Devices: {string.Join(", ", cannotSegment.Take(12).Select(d => d.InstanceId))}{(cannotSegment.Count > 12 ? ", ..." : "")}. Every answer must fit in one message of " +
+                $"{string.Join(" / ", cannotSegment.Select(d => d.MaxApdu).Distinct().Order())} bytes.",
+                "Normal for small controllers, especially on MS/TP. BACprobe asks them for a few points at a time, so reading a big one takes longer.",
                 "Nothing to fix. If reads of these devices time out, they are probably busy rather than broken."));
 
         foreach (var d in devices.Where(d => d.MaxApdu < 206))

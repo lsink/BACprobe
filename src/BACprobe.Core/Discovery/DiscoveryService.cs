@@ -72,6 +72,9 @@ public sealed class DiscoveryService : IDisposable
 
     public void Start() => _client.Start();
 
+    /// <summary>BACprobe is itself on one shared trunk (MS/TP): every device is reached through it, so reads should not run side by side.</summary>
+    public bool IsSharedMedium => _transport is not BacnetIpUdpProtocolTransport;
+
     /// <summary>A BBMD is a BACnet/IP thing: only an IP connection can register with one.</summary>
     public bool SupportsBbmd => _transport is BacnetIpUdpProtocolTransport;
 

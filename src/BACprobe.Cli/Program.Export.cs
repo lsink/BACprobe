@@ -103,17 +103,21 @@ internal static partial class Program
 
         var collected = new List<ExportDevice>();
         var failed = new List<string>();
-        var progress = new Progress<string>(m => Console.Write($"\r{m,-70}"));
-        foreach (var d in devices)
+        // A few devices at a time on the IP network; one at a time behind each router network (an MS/TP trunk) or over MS/TP.
+        var how = ReadLanes.Describe(ReadLanes.Plan(devices, svc.IsSharedMedium));
+        if (devices.Count > 1) Console.WriteLine($"Reading {devices.Count} devices, {how}...");
+        var done = 0;
+        var results = await ReadLanes.RunAsync(devices, svc.IsSharedMedium, async d =>
         {
-            try
-            {
-                collected.Add(await PointExporter.CollectAsync(svc.OpenDevice(d), d, progress));
-            }
-            catch (Exception ex)
-            {
-                failed.Add($"device {d.InstanceId} ({d.ObjectName ?? d.AddressText}): {ReadFailure(ex).Split('\n')[0]}");
-            }
+            var read = await PointExporter.CollectAsync(svc.OpenDevice(d), d,
+                new Progress<string>(m => Console.Write($"\r{$"[{Volatile.Read(ref done)}/{devices.Count}] {m}",-78}")));
+            Interlocked.Increment(ref done);
+            return read;
+        });
+        foreach (var r in results)
+        {
+            if (r.Value is { } read) collected.Add(read);
+            else failed.Add($"device {r.Device.InstanceId} ({r.Device.ObjectName ?? r.Device.AddressText}): {ReadFailure(r.Error!).Split('\n')[0]}");
         }
         Console.WriteLine();
 
