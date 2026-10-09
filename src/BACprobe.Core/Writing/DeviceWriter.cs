@@ -266,6 +266,10 @@ public sealed class DeviceWriter(BacnetClient client, WriteLog log, OverrideTrac
             {
                 var text = AlarmListenErrors.Explain(ex, request.Stop);
                 LogListen(request, nc, false, text.Summary);
+                // The device may have added us and only the ack was lost: remember it, so leaving still offers to take us off.
+                if (!request.Stop && WriteErrors.IsTimeout(ex))
+                    tracker.Record(new TrackedOverride(request.Device, request.DeviceName, nc, BacnetNames.ObjectLabel(nc),
+                        TrackedOverride.AlarmRecipientPriority, request.Me.AddressText, Unconfirmed: true));
                 // Taking BACprobe off a list it was never on (or that the device emptied) is not worth keeping a reminder for.
                 if (request.Stop && ex.Message.Contains("LIST_ELEMENT_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
                     tracker.Remove(request.Device.InstanceId, nc, TrackedOverride.AlarmRecipientPriority);

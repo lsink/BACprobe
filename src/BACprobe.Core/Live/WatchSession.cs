@@ -12,6 +12,8 @@ public sealed record WatchReading(WatchEntry Entry, ObjectSummary? Summary, stri
 /// </summary>
 public sealed class WatchSession(DiscoveryService service, IReadOnlyDictionary<uint, DiscoveredDevice> devices, LiveOptions options)
 {
+    private static readonly TimeSpan StaggerOnSharedMedium = TimeSpan.FromSeconds(1);
+
     /// <summary>A watched point's value, status or override changed.</summary>
     public event Action<uint, ObjectSummary>? PointChanged;
 
@@ -24,7 +26,7 @@ public sealed class WatchSession(DiscoveryService service, IReadOnlyDictionary<u
         var results = new WatchReading[entries.Count];
         var byDevice = entries.Select((e, i) => (e, i)).GroupBy(x => x.e.Device).ToList();
 
-        await Parallel.ForEachAsync(byDevice, new ParallelOptions { MaxDegreeOfParallelism = 6, CancellationToken = ct }, async (group, token) =>
+        await Parallel.ForEachAsync(byDevice, new ParallelOptions { MaxDegreeOfParallelism = DiscoveryService.ParallelismFor(service.IsSharedMedium, 6), CancellationToken = ct }, async (group, token) =>
         {
             if (!devices.TryGetValue(group.Key, out var device))
             {
@@ -55,9 +57,16 @@ public sealed class WatchSession(DiscoveryService service, IReadOnlyDictionary<u
     public async Task RunAsync(IReadOnlyList<WatchReading> readings, CancellationToken ct)
     {
         var tasks = new List<Task>();
+        var started = 0;
         foreach (var group in readings.Where(r => r.Summary is not null).GroupBy(r => r.Entry.Device))
         {
             if (!devices.TryGetValue(group.Key, out var device)) continue;
+            // On one MS/TP trunk, subscribing every device in the same instant queues them all behind one token: space the starts out.
+            if (service.IsSharedMedium && started++ > 0)
+            {
+                try { await Task.Delay(StaggerOnSharedMedium, ct); }
+                catch (OperationCanceledException) { break; }
+            }
             var instance = group.Key;
             var watcher = service.CreateLiveWatcher(device, [.. group.Select(r => r.Summary!)], options);
             watcher.PointChanged += s => PointChanged?.Invoke(instance, s);

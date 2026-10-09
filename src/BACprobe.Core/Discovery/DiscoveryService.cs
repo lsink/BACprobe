@@ -103,7 +103,7 @@ public sealed class DiscoveryService : IDisposable
         new(_client, device, new Browsing.DeviceBrowser(_client, device), points, options);
 
     /// <summary>Writes through this service's connection; every attempt is logged and overrides are tracked.</summary>
-    public Alarms.AlarmReader CreateAlarmReader() => new(_client);
+    public Alarms.AlarmReader CreateAlarmReader() => new(_client, IsSharedMedium);
 
     public Writing.DeviceWriter CreateWriter(Writing.WriteLog log, Writing.OverrideTracker tracker) => new(_client, log, tracker);
 
@@ -203,15 +203,20 @@ public sealed class DiscoveryService : IDisposable
     /// <paramref name="progress"/> hears about each device as soon as it is done, so a slow one does not hold up the rest.
     /// </summary>
     public async Task EnrichAsync(IEnumerable<DiscoveredDevice> devices, IProgress<DiscoveredDevice>? progress = null,
-        int parallelism = 8, CancellationToken ct = default)
+        int? parallelism = null, CancellationToken ct = default)
     {
-        await Parallel.ForEachAsync(devices, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
+        // One token serves a whole MS/TP trunk: parallel requests just queue behind it and the later ones time out.
+        var width = parallelism ?? ParallelismFor(IsSharedMedium);
+        await Parallel.ForEachAsync(devices, new ParallelOptions { MaxDegreeOfParallelism = width, CancellationToken = ct },
             async (d, token) =>
             {
                 await EnrichOneAsync(d, token);
                 progress?.Report(d);
             });
     }
+
+    /// <summary>How many devices to talk to at once: one at a time on a shared medium (MS/TP), otherwise <paramref name="ipWidth"/>.</summary>
+    public static int ParallelismFor(bool sharedMedium, int ipWidth = 8) => sharedMedium ? 1 : ipWidth;
 
     private static readonly BacnetPropertyIds[] Props =
     [
