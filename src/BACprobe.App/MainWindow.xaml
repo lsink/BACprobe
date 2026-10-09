@@ -635,6 +635,16 @@
             <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.8" Visibility="{Binding ShowReadOnlyHint, Converter={StaticResource BoolToVis}}"
                        Text="Read-only is on, so this point cannot be overridden. Switch Read-only off in the toolbar to override it." />
 
+            <!-- Read-only, but this session left an override here: releasing is cleanup, so it is still offered -->
+            <Border Margin="0,6,0,0" Padding="10,8" BorderBrush="{DynamicResource OverrideBrush}" BorderThickness="1" CornerRadius="6"
+                    Visibility="{Binding ShowReadOnlyRelease, Converter={StaticResource BoolToVis}}">
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Release my override" Padding="16,4" Margin="8,0,0,0" VerticalAlignment="Center"
+                        Command="{Binding ReleaseSelectedCommand}" AutomationProperties.Name="Release my override (read-only)" />
+                <TextBlock Text="{Binding ReadOnlyReleaseText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+              </DockPanel>
+            </Border>
+
             <!-- Override: hidden in read-only mode -->
             <Border Margin="0,6,0,0" Padding="10,8" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" CornerRadius="6"
                     Visibility="{Binding ShowOverridePanel, Converter={StaticResource BoolToVis}}">

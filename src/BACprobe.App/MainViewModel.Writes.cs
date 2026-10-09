@@ -32,12 +32,16 @@ public sealed partial class MainViewModel
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
-    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(ShowReadOnlyRelease), nameof(ReadOnlyReleaseText))]
     private bool _canWriteSelected;
 
-    /// <summary>Read-only mode: browsing and reading only. The override panel is hidden and writes are refused.</summary>
+    /// <summary>
+    /// Read-only mode: browsing and reading only. The override panel is hidden and new writes are refused, but giving control
+    /// back still works (as in <see cref="DeviceWriter.ReadOnly"/>): releasing this session's override and putting a point back in service.
+    /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(WindowTitle), nameof(ShowPropertyEditor), nameof(ShowDeviceActions))]
+    [NotifyPropertyChangedFor(nameof(ShowOverridePanel), nameof(ShowReadOnlyHint), nameof(ShowReadOnlyRelease), nameof(WindowTitle),
+        nameof(ShowPropertyEditor), nameof(ShowDeviceActions))]
     [NotifyCanExecuteChangedFor(nameof(WriteSelectedCommand), nameof(ReleaseSelectedCommand))]
     private bool _readOnlyMode = AppSettings.Current.ReadOnly;
 
@@ -46,18 +50,33 @@ public sealed partial class MainViewModel
     /// <summary>A writable point while read-only is on: say why the override controls are not there.</summary>
     public bool ShowReadOnlyHint => CanWriteSelected && ReadOnlyMode;
 
+    /// <summary>This session's overrides on the selected point (Present_Value priorities only, not Out_Of_Service or mutes).</summary>
+    private IReadOnlyList<TrackedOverride> MyOverridesOnSelected =>
+        SelectedDevice is { } d && SelectedObject is { } o
+            ? _overrides.Active.Where(t => t.Priority is >= 1 and <= 16 && t.Device.InstanceId == d.Device.InstanceId && t.Point.Equals(o.Summary.Id)).ToList()
+            : [];
+
+    /// <summary>Read-only is on, but this session left an override on the selected point: still offer to release it.</summary>
+    public bool ShowReadOnlyRelease => CanWriteSelected && ReadOnlyMode && MyOverridesOnSelected.Count > 0;
+
+    public string ReadOnlyReleaseText => MyOverridesOnSelected is [var first, ..]
+        ? $"You overrode this point at priority {first.Priority} earlier in this session. Read-only is on, but you can still give control back."
+        : "";
+
+    private bool CanRelease => ShowOverridePanel || ShowReadOnlyRelease;
+
     public string WindowTitle => ReadOnlyMode ? "BACprobe - READ-ONLY" : "BACprobe";
 
-    // Out_Of_Service: offered for any point that has the property (inputs too), hidden in read-only mode.
+    // Out_Of_Service: offered for any point that has the property (inputs too). In read-only mode only "Put back in service" is offered.
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowOutOfServicePanel))]
     private bool _canSetOutOfService;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(OutOfServiceButtonText))]
+    [NotifyPropertyChangedFor(nameof(OutOfServiceButtonText), nameof(ShowOutOfServicePanel))]
     private bool _isPointOutOfService;
 
-    public bool ShowOutOfServicePanel => CanSetOutOfService && !ReadOnlyMode;
+    public bool ShowOutOfServicePanel => CanSetOutOfService && (!ReadOnlyMode || IsPointOutOfService);
     public string OutOfServiceButtonText => IsPointOutOfService ? "Put back in service..." : "Take out of service...";
 
     partial void OnReadOnlyModeChanged(bool value)
@@ -76,7 +95,7 @@ public sealed partial class MainViewModel
         var row = SelectedObject;
         var deviceRow = SelectedDevice;
         if (_writer is null || _svc is null || row is null || deviceRow is null) return;
-        if (ReadOnlyMode)
+        if (ReadOnlyMode && !IsPointOutOfService) // putting a point back in service is cleanup, allowed in read-only mode
         {
             Status = "Read-only mode is on, so nothing was changed. Untick Read-only at the top to make changes.";
             return;
@@ -113,7 +132,7 @@ public sealed partial class MainViewModel
     [RelayCommand(CanExecute = nameof(ShowOverridePanel))]
     private Task WriteSelectedAsync() => DoWriteAsync(release: false);
 
-    [RelayCommand(CanExecute = nameof(ShowOverridePanel))]
+    [RelayCommand(CanExecute = nameof(CanRelease))]
     private Task ReleaseSelectedAsync() => DoWriteAsync(release: true);
 
 
@@ -122,9 +141,18 @@ public sealed partial class MainViewModel
         var row = SelectedObject;
         var deviceRow = SelectedDevice;
         if (_writer is null || _svc is null || row is null || deviceRow is null) return;
-        if (ReadOnlyMode)
+        if (ReadOnlyMode && !release)
         {
             Status = "Read-only mode is on, so nothing was written. Untick Read-only at the top to make changes.";
+            return;
+        }
+        // In read-only mode the priority picker is hidden: release at the priority this session wrote.
+        int priority;
+        if (!ReadOnlyMode) priority = SelectedPriority.Number;
+        else if (MyOverridesOnSelected is [var mine, ..]) priority = mine.Priority;
+        else
+        {
+            Status = "Read-only mode is on, and this session has no override on this point to release. Untick Read-only at the top to release at another priority.";
             return;
         }
 
@@ -148,7 +176,7 @@ public sealed partial class MainViewModel
         var deviceName = deviceRow.DisplayName;
         var request = new WriteRequest(deviceRow.Device, deviceName, obj.Id, obj.Name ?? obj.Label, value,
             value is { } v ? StateText.Describe(obj.Id.type, v, obj.StateNames) : "release", // "Standby (3)", "On (Active)"
-            SelectedPriority.Number, obj.ValueText);
+            priority, obj.ValueText);
 
         if (!ConfirmWrite(request))
         {
@@ -288,6 +316,9 @@ public sealed partial class MainViewModel
         if (onDevice > 0) parts.Add($"{onDevice} point(s) overridden on this device");
         if (problems > 0) parts.Add($"{problems} point(s) with a problem");
         OverrideSummary = parts.Count == 0 ? "No overrides or problems." : string.Join("  |  ", parts);
+        OnPropertyChanged(nameof(ShowReadOnlyRelease));
+        OnPropertyChanged(nameof(ReadOnlyReleaseText));
+        ReleaseSelectedCommand.NotifyCanExecuteChanged();
 
         // A point that just went into fault (or got overridden) must join the filtered list, and one that recovered must leave it.
         if (SelectedPointFilter?.Test is { } test)

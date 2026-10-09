@@ -9,6 +9,9 @@ wrong thing and without leaving an override behind. Your job as the observer is 
   - **Simulator (safe, anywhere):** run `dotnet run --project src/BACprobe.Cli -- simulate --devices 3 --bbmd` in a terminal and leave it running.
   - **Real site:** a controller you are allowed to override, ideally with a point that is safe to command (a spare output, or a setpoint).
 - The tester should be a new BMS tech, or someone who knows the basics of BACnet but has never seen this tool.
+- BACprobe starts in **Read-only** mode (toolbar switch; the title bar says READ-ONLY). Leave it on and do not mention it:
+  finding the switch from the hint on the point is part of the test. Releasing an override and putting a point back in service
+  still work with Read-only on, so a tester who switches it back on is never stuck with an override.
 
 ## The task (read this to the tester; give no other help)
 > You are at a building and need to override one point to a value you choose, check that it took effect, and put it back.
@@ -32,6 +35,7 @@ wrong thing and without leaving an override behind. Your job as the observer is 
 - Whether they read the confirmation dialog or just clicked through it.
 - Whether the priority list confused them; whether they picked something other than 8, and why.
 - Whether they noticed the "overrides in place" counter and the write log.
+- How long it took them to find the Read-only switch, and whether they switched it back on afterwards.
 - Anything they tried that the app did not support.
 
 ## If a problem appears
@@ -40,6 +44,7 @@ Record it, then check the likely causes below before blaming the tester.
 |---|---|
 | No devices found | Wrong adapter selected; pre-flight warning ignored; Windows Firewall prompt dismissed; devices on another subnet (needs a BBMD address) |
 | Port 47808 warning | Another BACnet tool is open; close it |
+| No override controls on the point | Read-only is on (title bar says READ-ONLY); the hint on the point says to switch it off |
 | Writes are refused | The point is an input, or not commandable; the error text should say so |
 | Override left behind after a crash | Run `bacprobe release --device <n> --object <type:n> --priority 8`, then check `%LOCALAPPDATA%\BACprobe\write-log.txt` |
 
