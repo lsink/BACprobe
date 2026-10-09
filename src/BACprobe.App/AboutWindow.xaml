@@ -1,0 +1,31 @@
+<Window x:Class="BACprobe.App.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="About BACprobe" Icon="Assets/app.ico" Width="520" SizeToContent="Height" MinHeight="300"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="24">
+    <TextBlock Text="BACprobe" FontSize="28" FontWeight="SemiBold" />
+    <TextBlock x:Name="VersionText" Margin="0,2,0,0" Opacity="0.8" />
+    <TextBlock Margin="0,12,0,0" TextWrapping="Wrap"
+               Text="A free BACnet explorer for building-automation technicians. Find devices, read and (carefully) override points, check the network, and watch an MS/TP trunk." />
+
+    <Grid x:Name="InfoGrid" Margin="0,16,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+    </Grid>
+
+    <TextBlock Margin="0,16,0,0" TextWrapping="Wrap" Opacity="0.8"
+               Text="Fully local: BACprobe makes no cloud calls and sends no telemetry. It only talks to the BACnet network you point it at." />
+    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.8"
+               Text="BACprobe is not BTL-listed and is provided as is, with no warranty. Test overrides on a bench before a live site." />
+
+    <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+      <Button Content="GitHub page" Click="OnOpenGitHub" Margin="0,0,8,0" />
+      <Button Content="Open data folder" Click="OnOpenDataFolder" Margin="0,0,8,0" />
+      <Button Content="Copy details" Click="OnCopy" Margin="0,0,8,0" ToolTip="Copy the version and system details, for a bug report" />
+      <Button Content="Close" IsCancel="True" IsDefault="True" Style="{DynamicResource AccentButtonStyle}" />
+    </StackPanel>
+  </StackPanel>
+</Window>

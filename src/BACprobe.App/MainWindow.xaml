@@ -121,6 +121,8 @@
       <MenuItem Header="_Help">
         <MenuItem Header="_Lessons..." Click="OnOpenLessons" />
         <MenuItem Header="Open the _write log folder" Click="OnOpenLogFolder" />
+        <Separator />
+        <MenuItem Header="_About BACprobe..." Click="OnAbout" />
       </MenuItem>
     </Menu>
 
