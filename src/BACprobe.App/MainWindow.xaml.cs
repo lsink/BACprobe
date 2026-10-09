@@ -15,6 +15,8 @@ public partial class MainWindow : Window
 
     private void OnOpenLessons(object sender, RoutedEventArgs e) => LessonWindow.Open();
 
+    private void OnAbout(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
+
     private void OnExit(object sender, RoutedEventArgs e) => Close();
 
     private void OnTreeSelected(object sender, RoutedPropertyChangedEventArgs<object> e) =>
