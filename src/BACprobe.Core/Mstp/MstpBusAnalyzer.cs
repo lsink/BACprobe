@@ -32,6 +32,9 @@ public sealed class MstpNodeStats(byte mac)
     /// <summary>Damaged frames that arrived right after this node was given its turn (token or poll): its own transmissions are the likely casualties.</summary>
     public int TurnErrors { get; internal set; }
 
+    /// <summary>How many times this node was given a turn (a token or a Poll For Master addressed to it).</summary>
+    public int TurnsGiven { get; internal set; }
+
     /// <summary>How long this node took to start transmitting after it was passed the token.</summary>
     public int PickupSamples { get; internal set; }
     internal long PickupTicksTotal { get; set; }
@@ -115,6 +118,7 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
         src.LastSeen = f.Timestamp;
         _turnOf = f.Type is (byte)MstpFrameType.Token or (byte)MstpFrameType.PollForMaster && f.Destination != MstpFrame.Broadcast
             ? f.Destination : null;
+        if (_turnOf is { } given) Node(given).TurnsGiven++;
 
         // Did the node that was just passed the token take it?
         if (_pendingPass is { } pass)
@@ -230,10 +234,10 @@ public sealed class MstpBusAnalyzer(int baud, long ticksPerSecond)
         }
 
         // Damage that keeps landing on one node's turn points at that node, not at the trunk in general.
-        foreach (var n in nodes.Where(n => n.TurnErrors >= 3))
+        // A node that never transmitted cannot have damaged transmissions: noise after a poll of an empty MAC is normal.
+        foreach (var n in nodes.Where(n => n.TurnErrors >= 3 && n.FramesSent > 0))
         {
-            var turns = Math.Max(1, n.TokensReceived + (n.PollReplies > 0 ? n.PollReplies : 0));
-            var share = (double)n.TurnErrors / turns;
+            var share = (double)n.TurnErrors / Math.Max(1, n.TurnsGiven);
             if (share < 0.2) continue;
             list.Add(new(share >= 0.5 ? FindingSeverity.Problem : FindingSeverity.Warning,
                 $"MAC {n.Mac}'s transmissions arrive damaged",

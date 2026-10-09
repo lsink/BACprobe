@@ -10,9 +10,10 @@ namespace BACprobe.Core.Alarms;
 /// points whose Status_Flags say in alarm or fault. Then reads each alarmed point's name, value and limits so the event can
 /// be explained. Reads only.
 /// </summary>
-public sealed class AlarmReader(BacnetClient client)
+public sealed class AlarmReader(BacnetClient client, bool sharedMedium = false)
 {
-    private const int Parallel = 8;
+    // One device at a time on MS/TP: requests would only queue behind the single token and time out.
+    private readonly int Parallel = DiscoveryService.ParallelismFor(sharedMedium);
 
     private static readonly BacnetPropertyIds[] EventProps =
         [BacnetPropertyIds.PROP_EVENT_STATE, BacnetPropertyIds.PROP_ACKED_TRANSITIONS, BacnetPropertyIds.PROP_EVENT_TIME_STAMPS];

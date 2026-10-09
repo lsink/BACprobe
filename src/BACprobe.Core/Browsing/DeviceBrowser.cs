@@ -104,8 +104,12 @@ public sealed class ObjectSummary
         StateNames = fresh.StateNames ?? StateNames;
         StatusFlags = fresh.StatusFlags ?? StatusFlags;
         Reliability = fresh.StatusFlags is null ? Reliability : fresh.Reliability;
-        PrioritySlots = fresh.PrioritySlots;
+        // A missing or timed-out priority-array read leaves the fresh slots empty, which must not wipe a known override.
+        if (fresh.PriorityArrayRead) PrioritySlots = fresh.PrioritySlots;
     }
+
+    /// <summary>True when the device actually answered the Priority_Array read, so an empty list means "nothing is set".</summary>
+    public bool PriorityArrayRead { get; set; }
 
     private static bool SameSlots(IReadOnlyList<PrioritySlot> a, IReadOnlyList<PrioritySlot> b) =>
         a.Count == b.Count && a.Zip(b).All(p => p.First.Priority == p.Second.Priority && p.First.ValueText == p.Second.ValueText);
@@ -408,6 +412,7 @@ public sealed class DeviceBrowser(BacnetClient client, DiscoveredDevice device)
             case BacnetPropertyIds.PROP_PRESENT_VALUE: s.PresentValue = text; break;
             case BacnetPropertyIds.PROP_PRIORITY_ARRAY:
                 s.PrioritySlots = PriorityArrayInfo.Occupied(s.Id.type, values);
+                s.PriorityArrayRead = true;
                 break;
             case BacnetPropertyIds.PROP_STATUS_FLAGS:
                 s.StatusFlags = PointHealth.FlagsFrom(values);

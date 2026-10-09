@@ -85,6 +85,21 @@ public class MstpHealthTests
     }
 
     [Fact]
+    public void A_polled_mac_that_never_transmits_is_not_blamed_for_noise()
+    {
+        var a = new MstpBusAnalyzer(38400, Tps);
+        long t = 0;
+        for (var i = 0; i < 5; i++)
+        {
+            a.AddFrame(new MstpFrame(t++, (byte)MstpFrameType.PollForMaster, 9, 1, [], 8)); // MAC 9 is empty: silence, then line noise
+            a.AddError(new MstpError(t++, MstpErrorKind.HeaderCrc));
+            a.AddFrame(Token(t++, 1, 2));
+            a.AddFrame(Token(t++, 2, 1));
+        }
+        Assert.DoesNotContain(a.Findings(), f => f.Title.Contains("MAC 9's transmissions arrive damaged"));
+    }
+
+    [Fact]
     public void One_burst_of_noise_counts_once()
     {
         var a = new MstpBusAnalyzer(38400, Tps);
