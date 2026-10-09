@@ -113,11 +113,17 @@ public sealed class DiscoveryService : IDisposable
         // Keep every reply, not just the first per device number: a second device using the same number would otherwise be invisible.
         var address = AddressInfo.Describe(adr);
         _heard.TryAdd((deviceId, address), new IAmObservation(deviceId, address, AddressInfo.NetworkOf(adr), AddressInfo.MacOf(adr), vendorId));
-        _devices.TryAdd(deviceId, new DiscoveredDevice
+        var fresh = new DiscoveredDevice
         {
             InstanceId = deviceId, Address = adr, MaxApdu = maxApdu, Segmentation = segmentation, VendorId = vendorId,
-        });
+        };
+        // The device the list holds is the one reads go to: when a number answers by two paths, keep the first unless a better one turns up.
+        _devices.AddOrUpdate(deviceId, fresh, (_, existing) => PrefersNewPath(existing.Address, adr) ? fresh : existing);
     }
+
+    /// <summary>True when an answer from <paramref name="incoming"/> should replace one from <paramref name="existing"/>: only a direct path beats a routed one.</summary>
+    public static bool PrefersNewPath(BacnetAddress existing, BacnetAddress incoming) =>
+        AddressInfo.IsRouted(existing) && !AddressInfo.IsRouted(incoming);
 
     private readonly ConcurrentDictionary<string, HashSet<ushort>> _routers = new();
 
